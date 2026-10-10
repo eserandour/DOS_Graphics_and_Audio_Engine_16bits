@@ -199,20 +199,3 @@ Vous êtes libre de l'utiliser, le modifier et le redistribuer, à condition
 que tout travail dérivé soit également publié sous GPL-3.0.
 
 Voir le fichier [`LICENSE`](LICENSE) pour le texte complet.
-
----
-
-## Version 32 bits
-
-Si les limites du modèle mémoire **16 bits / FAR** deviennent contraignantes, une version **32 bits** du moteur est également disponible :
-
-👉 **[DOS Graphics & Audio Engine – 32 bits](https://github.com/eserandour/DOS_Graphics_and_Audio_Engine_32bits)**
-
-Cette version utilise un **modèle mémoire flat 32 bits** avec **DOS/32A**. Elle permet donc d'adresser un espace mémoire beaucoup plus important que la version 16 bits et d'éviter les contraintes liées aux pointeurs FAR et aux segments de 64 Ko.
-
-Le choix entre les deux versions dépend donc principalement des besoins du projet :
-
-* **16 bits** : modèle mémoire DOS classique, pointeurs **FAR**, compatibilité avec l'environnement 8086 et approche très proche du développement DOS historique.
-* **32 bits** : mode protégé avec **DOS/32A**, espace d'adressage linéaire 32 bits et possibilité de manipuler beaucoup plus facilement de grandes quantités de données en mémoire.
-
-Les deux versions conservent la même philosophie : **C, DOS, accès direct au matériel VGA/Sound Blaster et absence de dépendances graphiques ou audio modernes**.
