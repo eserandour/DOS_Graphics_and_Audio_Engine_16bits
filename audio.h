@@ -86,6 +86,11 @@
    mixage en assembleur. */
 #define MIX_RATE  22050UL
 
+/* (Fréquence exacte sur Sound Blaster 16 ; sur une carte plus
+   ancienne, la constante de temps du DSP donne 22 222 Hz et le
+   mixage se fait à cette fréquence réelle — voir audioInit et
+   sblaster.h, FRÉQUENCE.) */
+
 /* ---------------------------------------------------------
    Cycle de vie
    --------------------------------------------------------- */
@@ -158,8 +163,12 @@ void fadeMusicIn(unsigned long durationMs);
    aucune musique n'est chargée ou si le moteur audio n'est pas actif. */
 void fadeMusicOut(unsigned long durationMs);
 
-/* Joue un effet sonore .wav sur une voie libre (jusqu'à 4 en
-   simultané). Sans effet si le moteur audio n'est pas actif. */
+/* Joue un effet sonore .wav sur une voie libre (jusqu'à
+   WAV_MAX_VOICES, 8, en simultané ; au-delà, le son démarré le
+   plus tôt est remplacé). Sans effet si le moteur audio n'est pas
+   actif. Retourne AUD_OK, AUD_ERR_NOCARD, AUD_ERR_FILE (fichier
+   introuvable), AUD_ERR_FORMAT (fichier invalide ou tronqué) ou
+   AUD_ERR_MEM. */
 int playSound(const char *filename);
 
 #endif /* AUDIO_H */

@@ -50,28 +50,64 @@
    l'échappement. Dans ce cas, couper la chaîne :
      "\x82" "e"  et non  "\x82e"  (lu comme un seul code 0x82E) */
 
-/* Minuscules accentuées */
+/* Minuscules accentuées (toutes celles de la page de codes CP850) */
+#define aAIGU   "\xA0"   /* á   CP850 : 0xA0   Unicode : 0xE1 */
+#define aGRAVE  "\x85"   /* à   CP850 : 0x85   Unicode : 0xE0 */
+#define aCIRC   "\x83"   /* â   CP850 : 0x83   Unicode : 0xE2 */
+#define aTREMA  "\x84"   /* ä   CP850 : 0x84   Unicode : 0xE4 */
+#define aTILDE  "\xC6"   /* ã   CP850 : 0xC6   Unicode : 0xE3 */
+#define aRING   "\x86"   /* å   CP850 : 0x86   Unicode : 0xE5 */
+#define cCED    "\x87"   /* ç   CP850 : 0x87   Unicode : 0xE7 */
 #define eAIGU   "\x82"   /* é   CP850 : 0x82   Unicode : 0xE9 */
 #define eGRAVE  "\x8A"   /* è   CP850 : 0x8A   Unicode : 0xE8 */
 #define eCIRC   "\x88"   /* ê   CP850 : 0x88   Unicode : 0xEA */
 #define eTREMA  "\x89"   /* ë   CP850 : 0x89   Unicode : 0xEB */
-#define aGRAVE  "\x85"   /* à   CP850 : 0x85   Unicode : 0xE0 */
-#define aCIRC   "\x83"   /* â   CP850 : 0x83   Unicode : 0xE2 */
-#define aTREMA  "\x84"   /* ä   CP850 : 0x84   Unicode : 0xE4 */
+#define iAIGU   "\xA1"   /* í   CP850 : 0xA1   Unicode : 0xED */
+#define iGRAVE  "\x8D"   /* ì   CP850 : 0x8D   Unicode : 0xEC */
+#define iCIRC   "\x8C"   /* î   CP850 : 0x8C   Unicode : 0xEE */
+#define iTREMA  "\x8B"   /* ï   CP850 : 0x8B   Unicode : 0xEF */
+#define nTILDE  "\xA4"   /* ñ   CP850 : 0xA4   Unicode : 0xF1 */
+#define oAIGU   "\xA2"   /* ó   CP850 : 0xA2   Unicode : 0xF3 */
+#define oGRAVE  "\x95"   /* ò   CP850 : 0x95   Unicode : 0xF2 */
+#define oCIRC   "\x93"   /* ô   CP850 : 0x93   Unicode : 0xF4 */
+#define oTREMA  "\x94"   /* ö   CP850 : 0x94   Unicode : 0xF6 */
+#define oTILDE  "\xE4"   /* õ   CP850 : 0xE4   Unicode : 0xF5 */
+#define oBARRE  "\x9B"   /* ø   CP850 : 0x9B   Unicode : 0xF8 */
+#define uAIGU   "\xA3"   /* ú   CP850 : 0xA3   Unicode : 0xFA */
 #define uGRAVE  "\x97"   /* ù   CP850 : 0x97   Unicode : 0xF9 */
 #define uCIRC   "\x96"   /* û   CP850 : 0x96   Unicode : 0xFB */
 #define uTREMA  "\x81"   /* ü   CP850 : 0x81   Unicode : 0xFC */
-#define iCIRC   "\x8C"   /* î   CP850 : 0x8C   Unicode : 0xEE */
-#define iTREMA  "\x8B"   /* ï   CP850 : 0x8B   Unicode : 0xEF */
-#define oCIRC   "\x93"   /* ô   CP850 : 0x93   Unicode : 0xF4 */
-#define oTREMA  "\x94"   /* ö   CP850 : 0x94   Unicode : 0xF6 */
-#define cCED    "\x87"   /* ç   CP850 : 0x87   Unicode : 0xE7 */
-/* Majuscules accentuées */
-#define EAIGU   "\x90"   /* É   CP850 : 0x90   Unicode : 0xC9 */
+#define yAIGU   "\xEC"   /* ý   CP850 : 0xEC   Unicode : 0xFD */
+#define yTREMA  "\x98"   /* ÿ   CP850 : 0x98   Unicode : 0xFF */
+/* Majuscules accentuées (toutes celles de la page de codes CP850 ;
+   Ÿ, Œ et œ n'existent pas en CP850) */
+#define AAIGU   "\xB5"   /* Á   CP850 : 0xB5   Unicode : 0xC1 */
+#define AGRAVE  "\xB7"   /* À   CP850 : 0xB7   Unicode : 0xC0 */
+#define ACIRC   "\xB6"   /* Â   CP850 : 0xB6   Unicode : 0xC2 */
 #define ATREMA  "\x8E"   /* Ä   CP850 : 0x8E   Unicode : 0xC4 */
-#define OTREMA  "\x99"   /* Ö   CP850 : 0x99   Unicode : 0xD6 */
-#define UTREMA  "\x9A"   /* Ü   CP850 : 0x9A   Unicode : 0xDC */
+#define ATILDE  "\xC7"   /* Ã   CP850 : 0xC7   Unicode : 0xC3 */
+#define ARING   "\x8F"   /* Å   CP850 : 0x8F   Unicode : 0xC5 */
 #define CCED    "\x80"   /* Ç   CP850 : 0x80   Unicode : 0xC7 */
+#define EAIGU   "\x90"   /* É   CP850 : 0x90   Unicode : 0xC9 */
+#define EGRAVE  "\xD4"   /* È   CP850 : 0xD4   Unicode : 0xC8 */
+#define ECIRC   "\xD2"   /* Ê   CP850 : 0xD2   Unicode : 0xCA */
+#define ETREMA  "\xD3"   /* Ë   CP850 : 0xD3   Unicode : 0xCB */
+#define IAIGU   "\xD6"   /* Í   CP850 : 0xD6   Unicode : 0xCD */
+#define IGRAVE  "\xDE"   /* Ì   CP850 : 0xDE   Unicode : 0xCC */
+#define ICIRC   "\xD7"   /* Î   CP850 : 0xD7   Unicode : 0xCE */
+#define ITREMA  "\xD8"   /* Ï   CP850 : 0xD8   Unicode : 0xCF */
+#define NTILDE  "\xA5"   /* Ñ   CP850 : 0xA5   Unicode : 0xD1 */
+#define OAIGU   "\xE0"   /* Ó   CP850 : 0xE0   Unicode : 0xD3 */
+#define OGRAVE  "\xE3"   /* Ò   CP850 : 0xE3   Unicode : 0xD2 */
+#define OCIRC   "\xE2"   /* Ô   CP850 : 0xE2   Unicode : 0xD4 */
+#define OTREMA  "\x99"   /* Ö   CP850 : 0x99   Unicode : 0xD6 */
+#define OTILDE  "\xE5"   /* Õ   CP850 : 0xE5   Unicode : 0xD5 */
+#define OBARRE  "\x9D"   /* Ø   CP850 : 0x9D   Unicode : 0xD8 */
+#define UAIGU   "\xE9"   /* Ú   CP850 : 0xE9   Unicode : 0xDA */
+#define UGRAVE  "\xEB"   /* Ù   CP850 : 0xEB   Unicode : 0xD9 */
+#define UCIRC   "\xEA"   /* Û   CP850 : 0xEA   Unicode : 0xDB */
+#define UTREMA  "\x9A"   /* Ü   CP850 : 0x9A   Unicode : 0xDC */
+#define YAIGU   "\xED"   /* Ý   CP850 : 0xED   Unicode : 0xDD */
 
 /* Nombre maximum de glyphes par Font1Bank.
    256 = ensemble complet des caractères (0 à 255). */
@@ -131,11 +167,17 @@ typedef enum {
    type  : indique si la police est BIOS ou personnelle.
    bank  : pointeur far vers la Font1Bank (si FONT1_TYPE_BANK).
            NULL si FONT1_TYPE_BIOS.
-   size  : taille en pixels d'un glyphe (espacement). */
+   size  : taille en pixels d'un glyphe (espacement).
+   charset : FONT1_CP850 pour les polices du moteur (valeur 0,
+           donc par défaut) ; FONT1_LATIN1 pour une banque rangée
+           en Latin-1 (voir « Majuscules accentuées » plus bas). */
 typedef struct {
     Font1Type      type;
     Font1Bank far *bank;
     int            size;
+    int            charset;  /* FONT1_CP850 (0, défaut) ou FONT1_LATIN1 :
+                                jeu de caractères des glyphes de la banque,
+                                pour reconnaître les majuscules accentuées */
 } Font1;
 
 /* ---------------------------------------------------------
@@ -143,7 +185,7 @@ typedef struct {
    --------------------------------------------------------- */
 
 /* Police BIOS ROM 8x8 (128 caractères IBM/ASCII). */
-extern Font1 FONT1_BIOS;
+extern Font1 FONT1_BIOS;  /*  À éviter : caractères non accentués */
 
 /* Polices personnelles initialisées par font1Init*()(). */
 extern Font1 FONT1_BANK_8X8;    /* font1Bank8x8 */
@@ -217,8 +259,9 @@ void font1DefineChar16x16(Font1Bank far *fb, unsigned char c,
    --------------------------------------------------------- */
 
 /* Dessine un caractère avec la police f.
-   Fonctionne avec FONT1_BIOS, FONT1_BANK_8X8, FONT1_BANK_16X16
-   ou toute autre Font1 correctement initialisée. */
+   Fonctionne avec FONT1_BIOS, FONT1_BANK_8X8, FONT1_BANK_8X16,
+   FONT1_BANK_16X16 ou toute autre Font1 correctement initialisée.
+   Borné à l'écran (un glyphe qui dépasse un bord est coupé). */
 void font1DrawChar(int x, int y, unsigned char c,
               unsigned char color, Font1 *f);
 
@@ -232,6 +275,49 @@ void font1DrawText(int x, int y, const char *str,
 void font1DrawTextCentered(int y, const char *str,
                       unsigned char color, Font1 *f);
 
+
+/* ---------------------------------------------------------
+   Majuscules accentuées pleine hauteur
+   ---------------------------------------------------------
+   Dans une cellule de 8 ou 16 lignes, une police doit faire
+   tenir l'accent : É, À, Ê... y sont dessinées plus petites
+   que E, A (une à deux lignes de moins). Règle du moteur : la
+   lettre sous l'accent a toujours la hauteur de la lettre
+   seule. font1DrawChar (et donc font1DrawText et
+   font1DrawTextCentered) dessine donc chaque majuscule
+   accentuée ainsi :
+     - la lettre de base, pleine hauteur (le glyphe E pour É) ;
+     - l'accent au-dessus, avec le même écart que dans la
+       minuscule de la police (au moins une ligne vide), quitte
+       à sortir de la cellule par le haut (prévoir la place
+       au-dessus d'une première ligne de texte).
+   L'accent est pris dans la police elle-même, sur la minuscule
+   correspondante (é, è, ê, ë, ã, å) : il garde le dessin, la
+   graisse et l'inclinaison de la police, et se centre sur
+   l'encre de la majuscule.
+   Concerne Á À Â Ä Ã Å É È Ê Ë Í Ì Î Ï Ñ Ó Ò Ô Ö Õ Ú Ù Û Ü Ý
+   (Ç ne change pas : sa cédille est dessous). Sans effet sur
+   la police BIOS (pas d'accents) ni sur font2 (feuilles ASCII).
+   Les polices du moteur sont en CP850. Une banque rangée en
+   Latin-1 doit le dire : f.charset = FONT1_LATIN1 (sinon ses
+   codes seraient lus en CP850).
+   font1FullCaps = 0 rend les glyphes d'origine (tableau de
+   glyphes d'une police, par exemple). */
+#define FONT1_CP850   0
+#define FONT1_LATIN1  1
+
+extern int font1FullCaps;      /* 1 par défaut */
+
+/* c est-il une majuscule accentuée redessinée par le moteur
+   avec la police f ? Si oui, rend 1, la lettre de base dans
+   *base et, dans *top, la ligne (relative au haut de la
+   cellule, souvent négative) où commence l'accent. */
+int  font1CapAccent(const Font1 *f, unsigned char c,
+                    unsigned char *base, int *top);
+/* 1 si le pixel (gx, gy) de la cellule appartient à l'accent
+   de la majuscule c (gy peut être négatif : au-dessus de la
+   cellule). 0 sinon, ou si c n'est pas concerné. */
+int  font1AccentPixel(const Font1 *f, unsigned char c, int gx, int gy);
 
 /* ---------------------------------------------------------
    Chargeurs de glyphes — usage interne uniquement

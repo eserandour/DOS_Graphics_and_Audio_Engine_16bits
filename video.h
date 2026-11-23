@@ -84,10 +84,22 @@ int  initBackbuffer(void);
    Met le pointeur à NULL pour éviter un accès invalide. */
 void freeBackbuffer(void);
 
-/* Copie le backbuffer vers la VRAM (affichage à l'écran).
+/* Copie le backbuffer vers la VRAM (affichage à l'écran),
+   juste après le prochain retour vertical quand le timer est
+   calé sur l'écran (voir timer.h) : l'image n'est jamais
+   coupée en deux tant que la copie va plus vite que le
+   balayage. En repli (timer non calé), copie immédiate.
    Utilise movedata() qui gère les segments far correctement.
-   À appeler après avoir fini de dessiner dans le backbuffer. */
+   À appeler après avoir fini de dessiner dans le backbuffer
+   (et après setPalette/fadePalette, pour que palette et image
+   changent au même retour vertical). */
 void flip(void);
+
+/* Fonction appelée par flip() juste avant d'attendre le retour
+   vertical (timer calé uniquement) : main.c y branche
+   audioUpdate(), pour que le son soit mixé pendant l'attente,
+   qui peut durer jusqu'à une image (~14 ms). NULL : aucune. */
+void setFlipIdleHook(void (*hook)(void));
 
 /* ---------------------------------------------------------
    Fonctions — Mode vidéo
@@ -104,11 +116,13 @@ void cursorOff(void);
 void cursorOn(void);
 
 /* Attend la synchronisation verticale du moniteur.
-   Le port 0x3DA indique l'état du signal VGA :
-   bit 3 = 1 pendant le retrace vertical.
-   Attendre le retrace avant flip() évite le palette
-   tearing (déchirure d'image visible lors des changements
-   de palette). */
+   Timer calé sur l'écran : attend le tick suivant (l'ISR du
+   timer l'incrémente au début de chaque retour vertical).
+   Repli : lecture du port 0x3DA (bit 3 = 1 pendant le
+   retrace vertical).
+   flip(), setPalette() et fadePalette() se synchronisent déjà
+   seuls : cette fonction sert aux accès directs au matériel
+   (setPaletteColor, registres VGA...). */
 void waitVRetrace(void);
 
 #endif /* VIDEO_H */

@@ -95,7 +95,10 @@ void font2Free(Font2Desc *fd);
 int font2IsLoaded(const Font2Desc *fd);
 
 /* Dessine le caractere c a (x, y) dans le backbuffer.
-   Caractere hors plage : rien n'est dessine.            */
+   Caractere hors plage : rien n'est dessine.
+   Borne a l'ecran : la partie du glyphe qui depasse un bord
+   n'est pas dessinee (un texte peut entrer ou sortir de
+   l'ecran sans ecrire hors du backbuffer).               */
 void font2DrawChar(Font2Desc *fd, unsigned char c,
                    int x, int y);
 

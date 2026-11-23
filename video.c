@@ -7,6 +7,7 @@
 #include <dos.h>      /* FP_SEG, FP_OFF             */
 #include <conio.h>    /* inp (lecture port 0x3DA)   */
 #include "video.h"
+#include "timer.h"    /* timer_ticks, timerIsVSyncLocked, timerWaitChange */
 
 /* ---------------------------------------------------------
    Backbuffer global
@@ -17,6 +18,15 @@
    Initialisé à NULL : indique que le buffer n'est pas
    encore alloué. */
 unsigned char far *backbuffer = NULL;
+
+/* Fonction appelée par flip() avant d'attendre le retour
+   vertical (voir setFlipIdleHook) ; NULL = aucune. */
+static void (*flipIdleHook)(void) = NULL;
+
+void setFlipIdleHook(void (*hook)(void))
+{
+    flipIdleHook = hook;
+}
 
 /* =========================================================
    BACKBUFFER
@@ -59,6 +69,20 @@ void freeBackbuffer(void)
    pointeur far. */
 void flip(void)
 {
+    if (timerIsVSyncLocked())
+    {
+        /* 1. le son d'abord (mixé avant l'attente) ;
+           2. attendre que l'ISR du timer ait vu le retour
+              vertical (relevé de timer_ticks APRÈS le crochet :
+              si le retour vertical tombe pendant le mixage, on
+              attend le suivant plutôt que de copier en plein
+              balayage) ;
+           3. copier. */
+        if (flipIdleHook)
+            flipIdleHook();
+        timerWaitChange(timer_ticks);
+    }
+
     movedata(
         FP_SEG(backbuffer), FP_OFF(backbuffer),  /* source : backbuffer en RAM  */
         VGA_SEG,            VGA_OFF,             /* destination : VRAM 0xA0000 */
@@ -112,7 +136,10 @@ void cursorOn(void)
    ========================================================= */
 
 /* Attend le prochain retrace vertical du moniteur.
-   Le registre d'état VGA (port 0x3DA) indique :
+   Timer calé sur l'écran : il suffit d'attendre que
+   timer_ticks change, l'ISR du timer l'incrémente au début
+   de chaque retour vertical. Rien ne peut être raté.
+   Repli : le registre d'état VGA (port 0x3DA) indique :
      bit 3 = 1 : retrace vertical en cours
      bit 3 = 0 : affichage actif (pas de retrace)
 
@@ -125,6 +152,11 @@ void cursorOn(void)
    toute sécurité sans provoquer de tearing visible. */
 void waitVRetrace(void)
 {
+    if (timerIsVSyncLocked())
+    {
+        timerWaitChange(timer_ticks);
+        return;
+    }
     while  (inp(0x3DA) & 0x08);    /* attendre fin du retrace en cours  */
     while (!(inp(0x3DA) & 0x08));  /* attendre début du prochain retrace */
 }

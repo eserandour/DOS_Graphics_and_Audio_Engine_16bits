@@ -5,8 +5,10 @@
 #include <stdio.h>    /* FILE, fopen, fread, fwrite, fclose */
 #include <string.h>   /* memcpy, _fmemset                   */
 #include <conio.h>    /* outp, inp                          */
+#include <dos.h>      /* _disable, _enable                  */
 #include "palette.h"
 #include "video.h"    /* waitVRetrace                       */
+#include "timer.h"    /* timerIsVSyncLocked, timerGetVSyncHook */
 
 /* =========================================================
    PALETTES GLOBALES
@@ -30,8 +32,8 @@ Color rainbowPalette[256];   /* cercle chromatique HSV 360° */
    ========================================================= */
 
 /* Charge un fichier .pal (768 octets : 256 × R/G/B sur 6 bits)
-   dans workingPalette et envoie immédiatement la palette
-   au DAC VGA.
+   dans workingPalette et l'envoie au DAC VGA avec
+   setPalette() (au prochain retour vertical).
 
    Format .pal : 256 entrées × 3 octets (R, G, B).
    Chaque composante est sur 6 bits (0-63), format natif
@@ -124,25 +126,86 @@ void setPaletteColor(unsigned char index,
     outp(0x3C9, b);       /* composante bleue (0-63)       */
 }
 
-/* Envoie les 256 couleurs d'une palette vers le DAC.
-   On attend le retrace vertical avant d'écrire pour éviter
-   le "palette tearing" : des bandes visibles à l'écran
-   causées par un changement de palette en cours d'affichage.
-   L'index s'incrémente automatiquement après chaque octet,
-   donc on n'écrit 0x3C8 qu'une seule fois pour les 256. */
+/* ---------------------------------------------------------
+   Palette en attente du retour vertical
+   ---------------------------------------------------------
+   Quand le timer est calé sur l'écran (timerIsVSyncLocked),
+   setPalette() et fadePalette() n'écrivent pas le DAC
+   eux-mêmes : ils déposent les 768 octets ici, et l'ISR du
+   timer les envoie au DAC juste après le prochain retour
+   vertical (paletteVSyncUpload, branchée par main.c avec
+   timerSetVSyncHook). Aucune attente pour l'appelant, et
+   palette et image changent au même retour vertical que le
+   flip() qui suit.
+   Les tableaux sont static (pas sur la pile, qui est petite
+   en 16 bits). dacPending est remplie interruptions coupées :
+   l'ISR ne peut jamais envoyer une palette à moitié copiée. */
+static unsigned char dacStage[768];     /* préparation (setPalette, fadePalette) */
+static unsigned char dacPending[768];   /* lue par l'ISR                          */
+static volatile int  dacDirty = 0;
+
+/* Envoie dacStage au DAC : au prochain retour vertical si le
+   timer est calé et que paletteVSyncUpload est branchée sur
+   lui ; sinon (repli), attend le retour vertical et écrit le
+   DAC tout de suite, comme à l'origine. */
+static void postDac(void)
+{
+    int i;
+
+    if (timerIsVSyncLocked() && timerGetVSyncHook() == paletteVSyncUpload)
+    {
+        _disable();
+        _fmemcpy(dacPending, dacStage, 768);
+        dacDirty = 1;
+        _enable();
+        return;
+    }
+
+    waitVRetrace();      /* attendre le retrace vertical    */
+    outp(0x3C8, 0);      /* commencer à l'index 0           */
+    for (i = 0; i < 768; i++)
+        outp(0x3C9, dacStage[i]);   /* R, G, B, l'index DAC avance seul */
+}
+
+/* Le code exécuté pendant l'interruption ne doit pas contenir
+   de contrôle de pile (voir timer.c). */
+#pragma off (check_stack);
+
+/* Appelée par l'ISR du timer juste après le retour vertical
+   (voir timerSetVSyncHook) : envoie au DAC la palette en
+   attente, s'il y en a une. 768 écritures de port, sans
+   appel à la bibliothèque C. */
+void paletteVSyncUpload(void)
+{
+    int i;
+
+    if (!dacDirty)
+        return;
+
+    outp(0x3C8, 0);
+    for (i = 0; i < 768; i++)
+        outp(0x3C9, dacPending[i]);
+    dacDirty = 0;
+}
+
+#pragma on (check_stack);
+
+/* Envoie les 256 couleurs d'une palette vers le DAC, au
+   prochain retour vertical (voir postDac).
+   Pourquoi au retour vertical ? Pour éviter le "palette
+   tearing" : des bandes visibles à l'écran causées par un
+   changement de palette en cours d'affichage. */
 void setPalette(Color *pal)
 {
     int i;
 
-    waitVRetrace();      /* attendre le retrace vertical    */
-    outp(0x3C8, 0);     /* commencer à l'index 0           */
     for (i = 0; i < 256; i++)
     {
-        outp(0x3C9, pal[i].r);   /* rouge  */
-        outp(0x3C9, pal[i].g);   /* vert   */
-        outp(0x3C9, pal[i].b);   /* bleu   */
-        /* l'index DAC passe automatiquement à i+1 */
+        dacStage[i * 3]     = pal[i].r;   /* rouge  */
+        dacStage[i * 3 + 1] = pal[i].g;   /* vert   */
+        dacStage[i * 3 + 2] = pal[i].b;   /* bleu   */
     }
+    postDac();
 }
 
 /* Lit les 256 couleurs actuelles du DAC VGA.
@@ -179,13 +242,17 @@ void copyPalette(Color *dest, Color *src)
      t = 1.0 → dest = palB (100% cible)
 
    Pourquoi le cast (int) avant la soustraction ?
-   Les composantes sont unsigned char (toujours >= 0).
-   En C, soustraire deux unsigned char donne un unsigned int :
-   si palB < palA, le résultat "enroule" et devient un grand
-   nombre positif (ex : 10u - 20u = 65526 en 16 bits unsigned)
-   au lieu de -10. Le cast (int) force l'arithmétique signée
-   pour que la différence puisse être négative, ce qui est
-   indispensable pour interpoler dans les deux sens. */
+   Les composantes sont unsigned char (0-63). En C, un
+   unsigned char est automatiquement promu en int (signé) dans
+   une expression arithmétique — pas en unsigned int — car int
+   peut représenter toutes les valeurs d'un unsigned char : la
+   soustraction palB[i].r - palA[i].r est donc déjà correctement
+   signée même sans cast explicite (contrairement à une
+   soustraction entre deux unsigned int, qui, elle, "enroulerait"
+   bel et bien en cas de résultat négatif, ex : 10u - 20u = 65526
+   en 16 bits). Le cast (int) est donc redondant avec les règles
+   de promotion du C, mais conservé à dessein : il documente
+   l'intention (arithmétique signée). */
 void lerpPalette(Color *dest, Color *palA, Color *palB, float t)
 {
     int i;
@@ -197,7 +264,8 @@ void lerpPalette(Color *dest, Color *palA, Color *palB, float t)
     }
 }
 
-/* Applique un facteur de luminosité et envoie au DAC.
+/* Applique un facteur de luminosité et envoie au DAC, au
+   prochain retour vertical (voir postDac).
    Chaque composante est multipliée par t (0.0 à 1.0).
    Ne modifie pas pal en mémoire : les valeurs originales
    sont préservées pour pouvoir refaire le calcul à chaque
@@ -205,21 +273,22 @@ void lerpPalette(Color *dest, Color *palA, Color *palB, float t)
 void fadePalette(Color *pal, float t)
 {
     int i;
-    waitVRetrace();
-    outp(0x3C8, 0);
+
     for (i = 0; i < 256; i++)
     {
-        outp(0x3C9, (unsigned char)(pal[i].r * t));
-        outp(0x3C9, (unsigned char)(pal[i].g * t));
-        outp(0x3C9, (unsigned char)(pal[i].b * t));
+        dacStage[i * 3]     = (unsigned char)(pal[i].r * t);
+        dacStage[i * 3 + 1] = (unsigned char)(pal[i].g * t);
+        dacStage[i * 3 + 2] = (unsigned char)(pal[i].b * t);
     }
+    postDac();
 }
 
 /* Décale toutes les couleurs d'un cran vers la gauche.
    Sauvegarde pal[start], décale pal[start+1..end] d'un
    cran, remet la sauvegarde en pal[end].
    Effet visuel : les couleurs "tournent" vers la gauche.
-   Appelle setPalette() pour appliquer immédiatement. */
+   Appelle setPalette() : la palette change au prochain retour
+   vertical. */
 void cyclePaletteLeft(Color *pal, int start, int end)
 {
     int i;
@@ -234,7 +303,9 @@ void cyclePaletteLeft(Color *pal, int start, int end)
    Sauvegarde pal[end], décale pal[start..end-1] d'un
    cran vers la droite (chaque entrée prend la valeur de
    son voisin de gauche), puis remet la sauvegarde en pal[start].
-   Effet visuel : les couleurs "tournent" vers la droite. */
+   Effet visuel : les couleurs "tournent" vers la droite.
+   Appelle setPalette() : la palette change au prochain retour
+   vertical. */
 void cyclePaletteRight(Color *pal, int start, int end)
 {
     int i;

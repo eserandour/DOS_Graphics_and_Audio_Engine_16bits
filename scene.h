@@ -14,7 +14,7 @@ typedef enum {
     SCENE_5  = 5,
     SCENE_6  = 6,
     SCENE_7  = 7,
-    SCENE_8  = 8,
+    SCENE_8  = 8   /* pas de virgule finale : interdite en C89 */
 } Scene;
 
 extern Scene currentScene;

@@ -87,6 +87,13 @@ int drawImage(const char *palFile, const char *rawFile,
     FILE *f;
     int r;
 
+    /* L'image doit tenir entierement dans l'ecran : sinon rawBlit
+       ecrirait hors du backbuffer (et une ligne de plus de 320
+       pixels deborderait de son tampon). */
+    if (srcW <= 0 || srcH <= 0 || dstX < 0 || dstY < 0 ||
+        srcW > SCREEN_WIDTH - dstX || srcH > SCREEN_HEIGHT - dstY)
+        return IMG_ERR_SIZE;
+
     /* Etape 1 : charger la palette et l'envoyer au DAC. */
     r = loadPalette(palFile);
     if (r != PAL_OK) return IMG_ERR_PAL;

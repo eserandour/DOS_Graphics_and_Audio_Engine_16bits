@@ -37,6 +37,8 @@
    IMG_ERR_PAL  1   impossible d'ouvrir le .pal
    IMG_ERR_RAW  2   impossible d'ouvrir le .raw
    IMG_ERR_READ 3   lecture incomplete (fichier trop court)
+   IMG_ERR_SIZE 4   image qui sortirait de l'ecran (srcW, srcH,
+                    dstX, dstY) : rien n'est ecrit
 
    FLUX TYPIQUE
    ------------
@@ -58,6 +60,7 @@
 #define IMG_ERR_PAL  1   /* impossible d'ouvrir le .pal     */
 #define IMG_ERR_RAW  2   /* impossible d'ouvrir le .raw     */
 #define IMG_ERR_READ 3   /* lecture incomplete              */
+#define IMG_ERR_SIZE 4   /* image hors de l'ecran (taille ou position) */
 
 
 /* ---------------------------------------------------------

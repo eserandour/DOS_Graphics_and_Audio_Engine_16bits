@@ -13,17 +13,17 @@
 void scene0(void)
 {
     static int initialized = 0;
-    const unsigned long scene_ms = 1000UL; // 1 seconde
+    const unsigned long scene_ms = 1000UL; /* 1 seconde */
 
     if (!initialized)
     {
         initialized = 1;
-        clearScreen(0); // Écran noir
+        clearScreen(0); /* Écran noir */
         flip();
-        sceneStart = readTimer(); // Démarre le chrono
+        sceneStart = readTimer(); /* Démarre le chrono */
     }
 
-    // Si le temps écoulé dépasse 1 seconde, on termine la scène
+    /* Si le temps écoulé dépasse 1 seconde, on termine la scène */
     if (elapsedTimeMs(sceneStart, readTimer()) >= scene_ms)
     {
         initialized = 0;

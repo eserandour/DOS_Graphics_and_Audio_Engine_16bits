@@ -8,21 +8,34 @@
 
    SOUS-ENSEMBLE SUPPORTÉ (volontairement limité — voir
    les notes de audio.c pour le détail complet) :
-     - Échantillons PCM non compressés, 8 ou 16 bits, mono
-       ou stéréo (convertis au chargement en 8 bits non
-       signés mono, format natif du moteur de mixage).
-     - Jusqu'à S3M_MAX_CHANNELS voies mixées simultanément
-       (les voies au-delà sont ignorées si le module en
-       utilise davantage — rare en pratique).
+     - Échantillons PCM non compressés, 8 ou 16 bits (signés
+       ou non, d'après l'en-tête), mono ou à deux voies (les
+       deux blocs gauche/droite sont moyennés) : convertis au
+       chargement en 8 bits non signés mono, format natif du
+       moteur de mixage. 65535 échantillons au plus chacun.
+     - Jusqu'à S3M_MAX_CHANNELS voies mixées simultanément :
+       les canaux PCM activés du fichier, dans l'ordre (les
+       canaux AdLib et désactivés n'en prennent pas ; au-delà
+       de 16 canaux PCM, les suivants sont ignorés — rare).
+     - Jusqu'à 100 motifs (maximum du format), 100 instruments,
+       256 ordres.
      - Volume global initial (Gv) et volume maître (Mv) lus
        depuis l'en-tête, fidèles au fichier plutôt que forcés
        à un maximum arbitraire (voir application dans s3m.c).
-     - Commandes : Axx (vitesse), Txx (tempo), Bxx (saut de
-       position), Cxx (rupture de motif, paramètre décodé en
-       BCD conformément au format S3M réel), Dxx (glissement
-       de volume, avec mémoire d'effet et glissements fins
-       DxF/DFx appliqués une seule fois), Vxx (volume global),
-       colonne de volume.
+     - Hauteur des notes calculée comme Scream Tracker 3
+       (période arrondie, dépendant du c2spd de l'échantillon).
+     - Commandes : Axx (vitesse), Txx (tempo, ignoré sous 33
+       comme dans ST3), Bxx (saut de position), Cxx (rupture
+       de motif : ligne xx de l'ordre suivant, paramètre décodé
+       en BCD conformément au format S3M réel), Dxx (glissement
+       de volume, tous les cas de ST3 : DxF/DFy fins au tick 0,
+       D0F/DF0 à tous les ticks, D0y/Dx0 aux ticks suivants),
+       Vxx (volume global), colonne de volume. Mémoire d'effet
+       de ST3 : un paramètre 00 de D (ou E F I J K L Q R S)
+       reprend le dernier paramètre non nul de la voie.
+     - Une note sans numéro d'instrument garde le volume
+       courant de la voie (seul un instrument le remet à sa
+       valeur par défaut), comme dans ST3.
      - Toutes les autres commandes (portamento, vibrato,
        arpège, offset...) sont ignorées : la note se
        déclenche quand même, seul l'effet fin est absent.

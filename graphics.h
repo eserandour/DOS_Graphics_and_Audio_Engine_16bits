@@ -53,7 +53,10 @@ unsigned char getPixel(int x, int y);
    Clipping Cohen-Sutherland intégré : les coordonnées hors
    écran sont clippées avant le tracé. Tracé par Bresenham
    (arithmétique entière, pas de virgule flottante).
-   Un segment entièrement hors écran ne dessine rien. */
+   Un segment entièrement hors écran ne dessine rien.
+   Les intersections du clipping sont calculées sur 32 bits :
+   pas de débordement de l'int 16 bits, même pour des
+   extrémités loin hors de l'écran. */
 void drawLine(int x1, int y1, int x2, int y2, unsigned char color);
 
 /* Trace le contour d'un rectangle (4 appels à drawLine).
@@ -81,8 +84,16 @@ void drawPolygon(int *pts, int n, unsigned char color);
    Pour chaque ligne horizontale (scanline), calcule les
    intersections avec les arêtes du polygone, les trie,
    puis remplit les segments entre paires d'intersections.
-   Algorithme : even-odd rule (règle pair-impair).
-   Clipping vertical et horizontal intégré. */
+   Algorithme : even-odd rule (règle pair-impair), au centre
+   des pixels (un pixel est rempli si son centre est dans le
+   polygone ; bords gauche et haut inclus, droit et bas
+   exclus) : deux polygones voisins se touchent sans couture
+   ni recouvrement.
+   Clipping vertical et horizontal intégré.
+   Exact jusqu'à POLY_FILL_MAX sommets ; au-delà, le remplissage
+   peut être incomplet sur certaines lignes (jamais d'écriture
+   hors mémoire). */
+#define POLY_FILL_MAX  256
 void drawPolygonFill(int *pts, int n, unsigned char color);
 
 /* ---------------------------------------------------------

@@ -39,9 +39,14 @@ void setScene(Scene s)
     sceneStart   = readTimer();
 }
 
+#define NB_SCENES_LINKED (sizeof(scenes) / sizeof(scenes[0]))
+
+/* Une scène hors du tableau (numéro invalide) ne fait rien,
+   au lieu d'appeler une adresse au hasard. */
 void runCurrentScene(void)
 {
-    scenes[currentScene]();
+    if ((unsigned)currentScene < NB_SCENES_LINKED)
+        scenes[currentScene]();
 }
 
 void sceneSignalEnd(void)

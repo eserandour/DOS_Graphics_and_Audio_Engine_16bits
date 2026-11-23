@@ -10,7 +10,10 @@
 
 /* Levé à 1 pour demander la sortie propre du programme.
    Écrit par keyboard.c (touche Échap) ou par une scène
-   en cas d'erreur fatale. Lu par la boucle de main.c. */
-extern int quitRequested;
+   en cas d'erreur fatale. Lu par la boucle de main.c.
+   volatile : modifié par une ISR (hors du flux normal du
+   programme), le compilateur ne doit pas garder sa valeur dans
+   un registre pendant une boucle d'attente. */
+extern volatile int quitRequested;
 
 #endif /* APP_H */

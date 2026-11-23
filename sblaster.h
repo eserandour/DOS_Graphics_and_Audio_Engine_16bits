@@ -28,7 +28,20 @@
    du 8237). sbAllocDmaBuffer() alloue le double de la
    taille demandée et choisit la moitié qui ne franchit pas
    cette frontière — technique classique, garantie correcte
-   pour toute taille <= 32768 octets.
+   pour toute taille <= 32767 octets (le double doit tenir dans
+   un bloc _fmalloc de 65535 octets au plus).
+
+   FRÉQUENCE
+   ---------
+   DSP >= 4.00 (Sound Blaster 16) : fréquence exacte en Hz
+   (sbSetOutputRate, commande 0x41) et sortie 8 bits auto-init
+   par la commande SB16 0xC6. Cartes plus anciennes (DSP 2.xx,
+   3.xx) : constante de temps (commande 0x40), qui ne donne que
+   1 000 000 / n Hz (22 222 Hz au plus près de 22 050) — audio.c
+   mixe alors à la fréquence réellement produite (sbRateFromTc),
+   pour que la musique garde sa hauteur et son tempo. La sortie
+   auto-init (0x1C) demande un DSP >= 2.00 : un DSP 1.xx est
+   refusé par audioInit().
    ========================================================= */
 
 /* ---------------------------------------------------------
@@ -65,6 +78,18 @@ int sbReset(void);
    contrairement à la commande 0x41 réservée aux DSP >= 4.xx. */
 void sbSetTimeConstant(unsigned char tc);
 
+/* Fréquence réellement produite par la constante de temps tc :
+   1 000 000 / (256 - tc) Hz. */
+unsigned long sbRateFromTc(unsigned char tc);
+
+/* 1 si le DSP est un 4.xx ou plus (Sound Blaster 16) : fréquence
+   exacte (sbSetOutputRate) et commande 0xC6 disponibles. */
+int sbIsDsp4(void);
+
+/* Fréquence de sortie exacte en Hz (commande 0x41, DSP >= 4.00
+   uniquement : voir sbIsDsp4). */
+void sbSetOutputRate(unsigned int hz);
+
 /* Positionne le volume du mixer matériel (s'il existe, SB Pro/16)
    au maximum. Sans effet — et sans erreur — sur un DSP sans
    puce mixer (SB 1.0/2.0) : dans ce cas il n'y a de toute façon
@@ -75,7 +100,7 @@ void sbSetMixerVolumeMax(void);
    Buffer DMA
    --------------------------------------------------------- */
 
-/* Alloue un buffer de 'size' octets (size <= 32768) garanti de
+/* Alloue un buffer de 'size' octets (size <= 32767) garanti de
    ne pas franchir une frontière physique de 64 Ko.
    *rawBlock reçoit le pointeur far à passer à _ffree().
    *physAddr reçoit l'adresse physique 20 bits (segment*16+offset)
@@ -113,7 +138,8 @@ void sbAckIRQ(void);
    sur un buffer circulaire de 2*halfLen octets (physAddr =
    adresse physique du DÉBUT de ce buffer, les deux moitiés
    devant être contiguës — voir sbAllocDmaBuffer), puis démarre
-   le DSP en sortie 8 bits auto-init (commande 0x1C).
+   le DSP en sortie 8 bits auto-init (commande 0x1C, ou 0xC6 sur
+   un DSP >= 4.00 : voir FRÉQUENCE plus haut).
 
    Le DSP boucle ensuite indéfiniment sur ce buffer et lève une
    IRQ tous les halfLen octets, SANS AUCUN réarmement CPU entre

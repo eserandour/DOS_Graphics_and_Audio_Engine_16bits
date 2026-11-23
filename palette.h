@@ -80,8 +80,8 @@ extern Color rainbowPalette[256];
    --------------------------------------------------------- */
 
 /* Charge un fichier .pal (768 octets : 256 × R/G/B sur 6 bits)
-   dans workingPalette et envoie immédiatement la palette
-   au DAC VGA.
+   dans workingPalette et l'envoie au DAC VGA avec
+   setPalette() (au prochain retour vertical).
    Ne touche pas au backbuffer.
    Retourne PAL_OK, PAL_ERR_FILE ou PAL_ERR_READ. */
 int loadPalette(const char *palFile);
@@ -97,14 +97,33 @@ int savePalette(const Color *pal, const char *filename);
 
 /* Définit une seule couleur dans le DAC VGA.
    index : numéro de la couleur (0-255)
-   r, g, b : composantes sur 6 bits (0-63). */
+   r, g, b : composantes sur 6 bits (0-63).
+   Écrit le DAC immédiatement, sans attendre le retour
+   vertical (une palette complète en attente, déposée par
+   setPalette/fadePalette, l'écrasera au retour vertical). */
 void setPaletteColor(unsigned char index,
                      unsigned char r, unsigned char g, unsigned char b);
 
-/* Envoie les 256 couleurs d'une palette vers le DAC VGA.
-   Attend le retrace vertical avant d'écrire pour éviter
-   le palette tearing (bandes de couleurs parasites). */
+/* Envoie les 256 couleurs d'une palette vers le DAC VGA au
+   prochain retour vertical, pour éviter le palette tearing
+   (bandes de couleurs parasites).
+   Timer calé sur l'écran et paletteVSyncUpload() branchée
+   sur le timer (cas normal, voir main.c) : ne bloque pas ; la
+   palette est copiée et l'ISR du timer l'envoie au DAC au
+   retour vertical, celui-là même où le flip() suivant affiche
+   l'image. Appeler donc setPalette() AVANT flip() pour que
+   palette et image changent ensemble. Plusieurs appels avant
+   le retour vertical : seul le dernier est envoyé.
+   Sinon (repli) : attend le retrace vertical (jusqu'à
+   ~14 ms) et écrit le DAC aussitôt. */
 void setPalette(Color *pal);
+
+/* Envoie au DAC la palette déposée par setPalette() ou
+   fadePalette(), s'il y en a une. Conçue pour être appelée
+   par l'ISR du timer juste après le retour vertical :
+   main.c la branche avec timerSetVSyncHook(). Ne pas
+   l'appeler hors interruption. */
+void paletteVSyncUpload(void);
 
 /* Lit les 256 couleurs actuelles du DAC dans un tableau.
    Utile pour sauvegarder la palette par défaut au démarrage. */
@@ -125,22 +144,28 @@ void copyPalette(Color *dest, Color *src);
 void lerpPalette(Color *dest, Color *palA, Color *palB, float t);
 
 /* Applique un facteur de luminosité à une palette et
-   l'envoie directement au DAC (sans modifier pal en RAM).
+   l'envoie au DAC comme setPalette() (au prochain retour
+   vertical, sans modifier pal en RAM).
    t = 0.0 → tout noir (fade out complet)
    t = 1.0 → palette originale (fade in complet)
    Utile pour les effets de fondu enchaîné. */
 void fadePalette(Color *pal, float t);
 
-/* Décale toutes les couleurs d'un cran vers la gauche dans
-   l'intervalle [start, end]. La couleur start est perdue,
-   la couleur end reçoit l'ancienne valeur de start.
+/* Fait tourner les couleurs d'un cran vers la gauche dans
+   l'intervalle [start, end] : chaque entrée reçoit la valeur
+   de son voisin de droite, et end reçoit l'ancienne valeur de
+   start (rotation : aucune couleur n'est perdue).
+   Envoie ensuite la palette au DAC via setPalette(), au
+   prochain retour vertical.
    Crée un effet de défilement des couleurs vers la gauche. */
 void cyclePaletteLeft(Color *pal, int start, int end);
 
 /* Décale toutes les couleurs d'un cran vers la droite dans
    l'intervalle [start, end]. La couleur end est sauvegardée,
    chaque entrée reçoit la valeur de son voisin de gauche, puis
-   la sauvegarde est replacée en start.
+   la sauvegarde est replacée en start (rotation).
+   Envoie ensuite la palette au DAC via setPalette(), au
+   prochain retour vertical.
    Crée un effet de défilement des couleurs vers la droite. */
 void cyclePaletteRight(Color *pal, int start, int end);
 
@@ -175,8 +200,9 @@ void buildGreenPalette(Color *pal);
 /* Génère un cercle chromatique HSV complet :
    index 0   → noir (r=g=b=0)
    index 1-255 → teinte sur 360° à saturation et valeur max.
-   Les décalages de 128 dans l'index donnent la couleur
-   complémentaire exacte, utile pour les effets de contraste. */
+   Un décalage de 128 dans l'index donne une teinte décalée
+   d'environ 180° (128/255 x 360 = 180,7°), soit quasiment la
+   complémentaire, utile pour les effets de contraste. */
 void buildRainbowPalette(Color *pal);
 
 #endif /* PALETTE_H */

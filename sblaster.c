@@ -200,6 +200,26 @@ void sbSetTimeConstant(unsigned char tc)
     dspWrite(tc);
 }
 
+unsigned long sbRateFromTc(unsigned char tc)
+{
+    return 1000000UL / (unsigned long)(256U - (unsigned int)tc);
+}
+
+int sbIsDsp4(void)
+{
+    return (sbVersionMajor >= 4) ? 1 : 0;
+}
+
+/* La commande 0x41 prend la fréquence en Hz sur 16 bits, octet
+   FORT d'abord (contrairement aux longueurs, envoyées octet
+   faible d'abord). */
+void sbSetOutputRate(unsigned int hz)
+{
+    dspWrite(0x41);
+    dspWrite((unsigned char)(hz >> 8));
+    dspWrite((unsigned char)(hz & 0xFF));
+}
+
 void sbSetMixerVolumeMax(void)
 {
     /* Port mixer = base + 0x4 (index), base + 0x5 (donnée).
@@ -228,7 +248,9 @@ unsigned char far *sbAllocDmaBuffer(unsigned int size,
     unsigned char far *p;
     unsigned long phys1, phys1End;
 
-    if (size == 0 || size > 32768U)
+    /* 2 * size doit tenir dans un bloc _fmalloc (size_t de 16 bits) :
+       avec size = 32768, 2 * size vaudrait 0. */
+    if (size == 0 || size > 32767U)
         return NULL;
 
     p = (unsigned char far *)_fmalloc((size_t)size * 2U);
@@ -317,6 +339,10 @@ void sbRestoreIRQ(void)
     sbIrqInstalled = 0;
 }
 
+/* Appelée depuis l'ISR audio : pas de contrôle de pile (voir
+   audio.c). */
+#pragma off (check_stack);
+
 void sbAckIRQ(void)
 {
     /* Acquitte le DSP côté 8 bits : la simple lecture de ce port
@@ -328,6 +354,8 @@ void sbAckIRQ(void)
         outp(0xA0, 0x20);   /* PIC esclave d'abord */
     outp(0x20, 0x20);       /* PIC maître toujours */
 }
+
+#pragma on (check_stack);
 
 /* ---------------------------------------------------------
    Sortie DMA 8 bits en boucle (auto-init), SANS réarmement
@@ -368,13 +396,26 @@ void sbStartOutputLoop(unsigned long physAddr, unsigned int halfLen)
 
     outp(DMA1_MASK, sbDma8);                 /* démasquer le canal */
 
+    if (sbIsDsp4())
+    {
+        /* SB16 : commande 0xC6 (8 bits, sortie, auto-init, FIFO),
+           mode 0x00 (mono, non signé), puis taille de bloc = une
+           moitié : une IRQ tous les halfLen octets. La fréquence
+           a été réglée par sbSetOutputRate(). */
+        dspWrite(0xC6);
+        dspWrite(0x00);
+        dspWrite((unsigned char)(blockCnt & 0xFF));
+        dspWrite((unsigned char)((blockCnt >> 8) & 0xFF));
+        return;
+    }
+
     /* Taille de bloc = une moitié : une IRQ tous les halfLen
        octets, exactement à la frontière entre A et B. */
     dspWrite(0x48);
     dspWrite((unsigned char)(blockCnt & 0xFF));
     dspWrite((unsigned char)((blockCnt >> 8) & 0xFF));
 
-    /* Commande DSP 0x1C : sortie DAC 8 bits, AUTO-INIT.
+    /* Commande DSP 0x1C : sortie DAC 8 bits, AUTO-INIT (DSP >= 2.00).
        Pas de paramètre de longueur : le DSP boucle sur le
        compte déjà programmé au contrôleur DMA ci-dessus. */
     dspWrite(0x1C);

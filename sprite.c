@@ -46,7 +46,7 @@ int spriteLoad(Sprite *spr, const char *rawFile, int w, int h)
     spr->h    = h;
 
     /* Vérification de la limite _fmalloc 16 bits. */
-    if (size > 65535L) return SPR_ERR_SIZE;
+    if (w <= 0 || h <= 0 || size > 65535L) return SPR_ERR_SIZE;
 
     spr->data = (unsigned char far *)_fmalloc((size_t)size);
     if (!spr->data) return SPR_ERR_MEM;
@@ -54,16 +54,26 @@ int spriteLoad(Sprite *spr, const char *rawFile, int w, int h)
     f = fopen(rawFile, "rb");
     if (!f) { _ffree(spr->data); spr->data = NULL; return SPR_ERR_FILE; }
 
+    /* Lecture par morceaux de sizeof(rowBuf) octets : une feuille
+       peut être plus large que l'écran (w > 320) sans déborder
+       du tampon. */
     for (row = 0; row < h; row++)
     {
-        if (fread(rowBuf, 1, (size_t)w, f) != (size_t)w)
+        int done = 0;
+        while (done < w)
         {
-            fclose(f);
-            _ffree(spr->data);
-            spr->data = NULL;
-            return SPR_ERR_READ;
+            int n = w - done;
+            if (n > (int)sizeof(rowBuf)) n = (int)sizeof(rowBuf);
+            if (fread(rowBuf, 1, (size_t)n, f) != (size_t)n)
+            {
+                fclose(f);
+                _ffree(spr->data);
+                spr->data = NULL;
+                return SPR_ERR_READ;
+            }
+            FCOPY(spr->data + (long)row * w + done, rowBuf, n);
+            done += n;
         }
-        FCOPY(spr->data + (long)row * w, rowBuf, w);
     }
 
     fclose(f);
@@ -373,7 +383,9 @@ int spriteLoadSplit(SpriteSplit *spr, const char *rawFile,
     spr->nBlk = 0;
     for (i = 0; i < SPR_SPLIT_MAX_BLK; i++) spr->blk[i] = NULL;
 
-    if (size > SPR_SPLIT_MAX) return SPR_ERR_SIZE;
+    /* Une ligne doit tenir dans rowBuf (et ne chevaucher que deux
+       blocs au plus, voir plus haut) : w <= 320. */
+    if (w <= 0 || h <= 0 || w > 320 || size > SPR_SPLIT_MAX) return SPR_ERR_SIZE;
 
     /* Calcule le nombre de blocs nécessaires et les alloue. */
     spr->nBlk = (int)((size + SPR_SPLIT_BLOCK - 1) / SPR_SPLIT_BLOCK);

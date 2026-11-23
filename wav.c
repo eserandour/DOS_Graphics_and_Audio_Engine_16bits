@@ -14,10 +14,13 @@ typedef struct {
     unsigned long        len;    /* échantillons (octets, 8 bits mono) */
     unsigned long        pos;    /* position 16.16 dans data           */
     unsigned long        step;   /* pas 16.16 (rééchantillonnage)      */
+    unsigned long        order;  /* rang de démarrage (le plus petit =
+                                    le son démarré le plus tôt)       */
     int                   active;
 } WavVoice;
 
 static WavVoice voices[WAV_MAX_VOICES];
+static unsigned long playCounter = 0;   /* rang du prochain son démarré */
 static unsigned long engineRate = 11025UL;
 
 void wavInit(unsigned long mixRate)
@@ -211,12 +214,18 @@ int wavPlay(const char *filename)
 
     fclose(f);
 
-    /* Voie libre en priorité, sinon la plus ancienne (0) : playSound()
+    /* Voie libre en priorité, sinon celle du son démarré le plus tôt
+       (et non la voie 0, toujours la même, comme avant) : playSound()
        est ainsi TOUJOURS audible, jamais silencieusement ignoré. */
     slot = -1;
     for (i = 0; i < WAV_MAX_VOICES; i++)
         if (!voices[i].active) { slot = i; break; }
-    if (slot < 0) slot = 0;
+    if (slot < 0)
+    {
+        slot = 0;
+        for (i = 1; i < WAV_MAX_VOICES; i++)
+            if (voices[i].order < voices[slot].order) slot = i;
+    }
 
     if (voices[slot].data) _ffree(voices[slot].data);
 
@@ -226,6 +235,7 @@ int wavPlay(const char *filename)
     voices[slot].step = (sampleRate / engineRate) << 16;
     voices[slot].step += ((sampleRate % engineRate) << 16) / engineRate;
     if (voices[slot].step == 0) voices[slot].step = 1;   /* jamais figé */
+    voices[slot].order  = playCounter++;
     voices[slot].active = 1;
 
     return WAV_OK;
@@ -251,7 +261,16 @@ void wavMix(unsigned char far *buf, unsigned int n)
             int sample, cur, mixed;
 
             idx = voices[i].pos >> 16;
-            if (idx >= voices[i].len) { voices[i].active = 0; break; }
+            if (idx >= voices[i].len)
+            {
+                /* Fin du son : voie libérée, mémoire rendue tout de
+                   suite (wavMix tourne hors interruption, dans
+                   audioUpdate). */
+                voices[i].active = 0;
+                _ffree(voices[i].data);
+                voices[i].data = NULL;
+                break;
+            }
 
             sample = (int)voices[i].data[idx] - 128;
             cur    = (int)buf[s] - 128;

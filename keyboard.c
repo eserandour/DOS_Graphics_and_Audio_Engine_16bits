@@ -13,9 +13,16 @@
 #include "keyboard.h"
 #include "app.h"    /* quitRequested                       */
 
-int quitRequested = 0;
+volatile int quitRequested = 0;   /* modifié par l'ISR : voir app.h */
 
 static void interrupt (far *old_kbd_isr)();
+
+/* Le code exécuté pendant l'interruption ne doit pas contenir
+   de contrôle de pile : l'interruption peut tomber pendant un
+   appel DOS ou BIOS, sur une autre pile que celle du programme,
+   et le contrôle croirait alors à un débordement (arrêt du
+   programme). */
+#pragma off (check_stack);
 
 static void interrupt new_kbd_isr(void)
 {
@@ -29,6 +36,8 @@ static void interrupt new_kbd_isr(void)
     _asm { mov al, 0x20
            out 0x20, al }       /* EOI au PIC 8259 */
 }
+
+#pragma on (check_stack);
 
 void installKeyboard(void)
 {

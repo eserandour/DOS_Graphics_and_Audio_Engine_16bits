@@ -88,7 +88,8 @@ void drawLine(int x1, int y1, int x2, int y2, unsigned char color)
 {
     int code1 = cs_code(x1, y1);
     int code2 = cs_code(x2, y2);
-    int code, dx, dy, sx, sy, err, e2;
+    int code, sx, sy, err, e2, adx, ady;
+    long dx, dy;     /* x2 - x1 peut dépasser 32767 (extrémités hors écran) */
 
     while (1)
     {
@@ -96,33 +97,33 @@ void drawLine(int x1, int y1, int x2, int y2, unsigned char color)
         if (code1 & code2)    return;
 
         code = code1 ? code1 : code2;
-        dx = x2 - x1;
-        dy = y2 - y1;
+        dx = (long)x2 - x1;
+        dy = (long)y2 - y1;
 
         if (code & CS_OUT_BOTTOM)
         {
-            int nx = x1 + dx * (SCREEN_HEIGHT - 1 - y1) / dy;
+            int nx = x1 + (int)((long)dx * (SCREEN_HEIGHT - 1 - y1) / dy);
             int ny = SCREEN_HEIGHT - 1;
             if (code == code1) { x1 = nx; y1 = ny; code1 = cs_code(x1, y1); }
             else               { x2 = nx; y2 = ny; code2 = cs_code(x2, y2); }
         }
         else if (code & CS_OUT_TOP)
         {
-            int nx = x1 + dx * (-y1) / dy;
+            int nx = x1 + (int)((long)dx * (-y1) / dy);
             int ny = 0;
             if (code == code1) { x1 = nx; y1 = ny; code1 = cs_code(x1, y1); }
             else               { x2 = nx; y2 = ny; code2 = cs_code(x2, y2); }
         }
         else if (code & CS_OUT_RIGHT)
         {
-            int ny = y1 + dy * (SCREEN_WIDTH - 1 - x1) / dx;
+            int ny = y1 + (int)((long)dy * (SCREEN_WIDTH - 1 - x1) / dx);
             int nx = SCREEN_WIDTH - 1;
             if (code == code1) { x1 = nx; y1 = ny; code1 = cs_code(x1, y1); }
             else               { x2 = nx; y2 = ny; code2 = cs_code(x2, y2); }
         }
         else
         {
-            int ny = y1 + dy * (-x1) / dx;
+            int ny = y1 + (int)((long)dy * (-x1) / dx);
             int nx = 0;
             if (code == code1) { x1 = nx; y1 = ny; code1 = cs_code(x1, y1); }
             else               { x2 = nx; y2 = ny; code2 = cs_code(x2, y2); }
@@ -132,19 +133,19 @@ void drawLine(int x1, int y1, int x2, int y2, unsigned char color)
     /* Bresenham avec écriture directe.
        Après le clipping, toutes les coordonnées sont dans les
        bornes → PUT_PIXEL_UNSAFE est sûr, pas de check ni d'appel. */
-    dx  = abs(x2 - x1);
-    dy  = abs(y2 - y1);
+    adx = abs(x2 - x1);     /* coordonnées clippées : tient en int */
+    ady = abs(y2 - y1);
     sx  = (x1 < x2) ? 1 : -1;
     sy  = (y1 < y2) ? 1 : -1;
-    err = dx - dy;
+    err = adx - ady;
 
     while (1)
     {
         PUT_PIXEL_UNSAFE(x1, y1, color);
         if (x1 == x2 && y1 == y2) break;
         e2 = err << 1;                     /* 2*err sans mul */
-        if (e2 > -dy) { err -= dy; x1 += sx; }
-        if (e2 <  dx) { err += dx; y1 += sy; }
+        if (e2 > -ady) { err -= ady; x1 += sx; }
+        if (e2 <  adx) { err += adx; y1 += sy; }
     }
 }
 
@@ -208,20 +209,64 @@ void drawPolygon(int *pts, int n, unsigned char color)
 /* =========================================================
    POLYGONE PLEIN — Scanline filling (even-odd rule)
    =========================================================
+   Règle du centre des pixels : la ligne y est coupée à sa
+   hauteur médiane (y + 0,5), et un pixel x est rempli si son
+   centre (x + 0,5) tombe entre deux intersections, bord gauche
+   compris, bord droit exclu. Deux polygones qui partagent une
+   arête se touchent donc exactement, sans couture ni pixel
+   écrit deux fois. Les intersections sont calculées en virgule
+   fixe 16.16, sur 32 bits (l'int de 16 bits déborderait dès que
+   dx * (y - y1) dépasse 32767).
    intersections[] déclaré static : plus d'allocation
    sur la pile à chaque appel. DOS est mono-tâche, la fonction
    n'est pas réentrante → le tableau static est sûr.
+   Une scanline coupe au plus une arête par sommet : avec au plus
+   POLY_FILL_MAX sommets, le remplissage est exact. Au-delà, les
+   intersections en trop sont ignorées (remplissage incomplet sur
+   certaines lignes) plutôt que d'écrire hors du tableau.
    ========================================================= */
+
+/* x de l'arête (x1,y1)-(x2,y2) au centre de la ligne y, en 16.16 :
+   x1 + (x2 - x1) * (2y + 1 - 2y1) / (2(y2 - y1)), tronqué vers zéro.
+   Chemin courant en deux divisions 32 bits : avec a = dx.num =
+   q.den + r, le résultat vaut q.2^16 + (r.2^16) / den, les deux
+   termes ayant le même signe. Bornes : |dx| < 2^14, |num| et
+   |den| < 2^15 donnent |a| < 2^29 et |r.2^16| < 2^31 ; |x1| et
+   |dx| < 2^14 gardent x.2^16 sous 2^31. Sommets plus lointains
+   (rare) : calcul en flottant, x ramené dans [-1024, 2048], ce
+   qui ne change rien au remplissage d'un écran de 320 pixels. */
+static long edgeX16(int x1, int y1, int x2, int y2, int y)
+{
+    long dx  = (long)x2 - x1;
+    long num = 2L * y + 1L - 2L * y1;
+    long den = 2L * ((long)y2 - y1);
+    long a, q, r;
+    double xf;
+
+    if (dx > -16384L && dx < 16384L && x1 > -16384 && x1 < 16384 &&
+        den > -32768L && den < 32768L && num > -32768L && num < 32768L)
+    {
+        a = dx * num;
+        q = a / den;
+        r = a % den;
+        return ((long)x1 << 16) + q * 65536L + (r * 65536L) / den;
+    }
+    xf = (double)x1 + (double)dx * (double)num / (double)den;
+    if (xf < -1024.0) xf = -1024.0;
+    if (xf >  2048.0) xf =  2048.0;
+    return (long)(xf * 65536.0);
+}
 
 void drawPolygonFill(int *pts, int n, unsigned char color)
 {
     /* Static : un seul tableau en mémoire, jamais sur la pile. */
-    static int intersections[SCREEN_WIDTH];
+    static long intersections[POLY_FILL_MAX];
 
     int i, j;
     int y, ymin, ymax;
     int x1, y1, x2, y2;
-    int count, tmp, dx, dy;
+    int count, xs, xe;
+    long tmp, fy;
 
     if (n < 3) return;
 
@@ -232,24 +277,24 @@ void drawPolygonFill(int *pts, int n, unsigned char color)
         if (pts[i*2+1] > ymax) ymax = pts[i*2+1];
     }
 
-    if (ymin < 0)              ymin = 0;
-    if (ymax >= SCREEN_HEIGHT) ymax = SCREEN_HEIGHT - 1;
+    if (ymin < 0)             ymin = 0;
+    if (ymax > SCREEN_HEIGHT) ymax = SCREEN_HEIGHT;
 
-    for (y = ymin; y <= ymax; y++)
+    for (y = ymin; y < ymax; y++)
     {
+        fy    = 2L * y + 1L;               /* 2 x (centre de la ligne) */
         count = 0;
 
         for (i = 0; i < n; i++)
         {
-            j  = (i + 1) % n;
+            j  = (i + 1 == n) ? 0 : i + 1;
             x1 = pts[i*2];   y1 = pts[i*2+1];
             x2 = pts[j*2];   y2 = pts[j*2+1];
 
-            if ((y1 <= y && y2 > y) || (y2 <= y && y1 > y))
+            if ((2L*y1 <= fy && fy < 2L*y2) || (2L*y2 <= fy && fy < 2L*y1))
             {
-                dy = y2 - y1;
-                dx = x2 - x1;
-                intersections[count++] = x1 + (dx * (y - y1)) / dy;
+                if (count < POLY_FILL_MAX)
+                    intersections[count++] = edgeX16(x1, y1, x2, y2, y);
             }
         }
 
@@ -266,19 +311,18 @@ void drawPolygonFill(int *pts, int n, unsigned char color)
             intersections[j+1] = tmp;
         }
 
-        /* Remplissage par paires d'intersections (règle pair-impair). */
+        /* Remplissage par paires d'intersections (règle pair-impair) :
+           pixels dont le centre est dans [début, fin). */
         for (i = 0; i + 1 < count; i += 2)
         {
-            int xstart = intersections[i];
-            int xend   = intersections[i+1];
-            int len;
-
-            if (xstart < 0)             xstart = 0;
-            if (xend   >= SCREEN_WIDTH) xend   = SCREEN_WIDTH - 1;
-
-            len = xend - xstart;
-            if (len > 0)
-                PUT_HLINE(xstart, y, len, color);
+            long a = (intersections[i]   - 0x8000L + 0xFFFFL) >> 16;
+            long b = (intersections[i+1] - 0x8000L + 0xFFFFL) >> 16;
+            if (a < 0)            a = 0;
+            if (b > SCREEN_WIDTH) b = SCREEN_WIDTH;
+            xs = (int)a;
+            xe = (int)b;
+            if (xe > xs)
+                PUT_HLINE(xs, y, xe - xs, color);
         }
     }
 }

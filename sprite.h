@@ -51,7 +51,8 @@
    SPR_ERR_MEM      1   _fmalloc a retourné NULL
    SPR_ERR_FILE     2   fopen a échoué
    SPR_ERR_READ     3   fread incomplet (fichier trop court)
-   SPR_ERR_SIZE     4   w*h > 65535 (utiliser spriteLoadSplit)
+   SPR_ERR_SIZE     4   w*h > 65535 (utiliser spriteLoadSplit),
+                        ou w, h <= 0
 
    FLUX TYPIQUES
    -------------
@@ -185,7 +186,8 @@ void spriteBlitFrameKey(const Sprite *spr, int frameIndex,
 
 /* Charge le .raw en N blocs far de 32 768 octets max chacun.
    Retourne SPR_OK ou un code SPR_ERR_* (SPR_ERR_SIZE si
-   w*h > SPR_SPLIT_MAX). */
+   w*h > SPR_SPLIT_MAX, ou si w > 320 : une ligne doit tenir
+   dans la largeur de l'écran). */
 int spriteLoadSplit(SpriteSplit *spr, const char *rawFile,
                     int w, int h);
 

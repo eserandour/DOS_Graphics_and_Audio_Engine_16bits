@@ -25,6 +25,8 @@ void shutdown(void)
     /* Couper le DMA/IRQ audio en tout premier, avant de toucher aux
        autres vecteurs — voir audio.h ("SORTIE PROPRE (Échap)"). */
     audioShutdown();
+    setFlipIdleHook(NULL);
+    timerSetVSyncHook(NULL);
     restoreKeyboard();
     restoreTimer();
     setVideoMode(0x03);
@@ -84,13 +86,25 @@ int main(void)
 
     setVideoMode(0x13);
     getPalette(defaultPalette);
+
+    /* installTimer() mesure la fréquence de l'écran : à appeler
+       APRÈS setVideoMode(0x13) (voir timer.h). */
     installTimer();
+
+    /* Palette envoyée au DAC par l'ISR du timer, juste après le
+       retour vertical (voir palette.h). */
+    timerSetVSyncHook(paletteVSyncUpload);
+
     installKeyboard();
 
     /* Si aucune carte son n'est détectée (BLASTER absent, DSP muet),
        audioInit() échoue proprement : playMusic()/playSound() restent
        de simples no-op et la démo continue normalement en silence. */
     audioInit();
+
+    /* flip() mixe le son pendant qu'il attend le retour vertical
+       (voir video.h). */
+    setFlipIdleHook(audioUpdate);
 
     /* Brancher l'orchestrateur avant la première scène. */
     onSceneEnd = handleSceneEnd;

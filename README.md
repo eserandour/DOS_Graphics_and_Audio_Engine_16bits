@@ -1,6 +1,6 @@
 # DOS Graphics & Audio Engine (16 bits)
 
-*Dernière version : 10/08/2026 à 23h14*
+*Dernière version : 23/11/2026 à 14h54*
 
 Un **moteur graphique et audio** en C89 pur pour **DOS**, compilé avec
 **Open Watcom 1.9**, sans aucune dépendance externe au runtime : mode vidéo
@@ -75,18 +75,18 @@ scènes de démonstration :
 
 | Module | Rôle |
 |---|---|
-| `video.h/c` | Mode 13h, double buffer en RAM far, `flip()`, synchronisation `waitVRetrace()` |
-| `palette.h/c` | Palette DAC VGA 256 couleurs (6 bits/canal) : lecture/écriture, interpolation, cyclage, générateurs procéduraux |
+| `video.h/c` | Mode 13h, double buffer en RAM far, `flip()` au retour vertical (image jamais coupée), `waitVRetrace()` |
+| `palette.h/c` | Palette DAC VGA 256 couleurs (6 bits/canal) : lecture/écriture (envoyée au DAC au retour vertical, en même temps que l'image), interpolation, cyclage, générateurs procéduraux |
 | `graphics.h/c` | Primitives 2D avec clipping intégré : pixel, ligne (Bresenham + Cohen-Sutherland), rectangle, polygone (scanline), cercle (mid-point) |
 | `image.h/c` | Chargement one-shot d'images `.raw`/`.pal` (fond d'écran, écran titre) |
 | `sprite.h/c` | Sprites préchargés en far heap, blit opaque ou avec transparence (`colorKey`), sans accès disque par frame |
-| `font1.h/c` | Moteur de texte bitmap multi-tailles : police ROM BIOS ou banques personnelles (8×8, 8×16, 16×16) |
+| `font1.h/c` | Moteur de texte bitmap multi-tailles : police ROM BIOS ou banques personnelles (8×8, 8×16, 16×16, toutes en CP850), **majuscules accentuées pleine hauteur** |
 | `font2.h/c` | Texte par feuille de sprites `.raw`, décrite par un descripteur (`Font2Desc`) |
-| `timer.h/c` | Timer haute résolution 70 Hz (PIT 8253 reprogrammé, ISR chaînée au BIOS) |
+| `timer.h/c` | Timer calé sur le retour vertical de l'écran (un tick par image, ~70,086 Hz ; repli : PIT libre à 70 Hz), ISR chaînée au BIOS |
 | `keyboard.h/c` | Détection Échap par ISR INT 09h, sans consommer le buffer clavier |
 | `sblaster.h/c` | Pilote bas niveau Sound Blaster (DSP + DMA), détection via `BLASTER` |
 | `s3m.h/c` | Lecteur de modules **S3M** (Scream Tracker 3), jusqu'à 16 voies mixées en logiciel |
-| `wav.h/c` | Mixeur d'effets sonores **WAV**, jusqu'à 4 voies simultanées |
+| `wav.h/c` | Mixeur d'effets sonores **WAV**, jusqu'à 8 voies simultanées |
 | `audio.h/c` | API audio de haut niveau (`playMusic`, `playSound`, fondus) assemblant `sblaster`/`s3m`/`wav` |
 | `scene.h/c` | Gestionnaire de scènes (playlist, callback de fin de scène) utilisé par l'application de démonstration |
 
@@ -114,10 +114,92 @@ bouclage.
 
 ## Moteur audio
 
+Huit sons WAV peuvent jouer en même temps (`WAV_MAX_VOICES`, réglable à
+la compilation) ; au-delà, le son démarré le plus tôt est remplacé. Sur
+une Sound Blaster 16, la sortie est réglée à 22 050 Hz exacts ; sur une
+carte plus ancienne (DSP 2.xx ou 3.xx), la carte ne sait produire que
+22 222 Hz et le mixage se fait à cette fréquence réelle, pour que la
+musique garde sa hauteur et son tempo. Un DSP 1.xx, qui ne sait pas
+boucler sans clic, est refusé (silence).
+
 La détection de carte se fait via la variable d'environnement `BLASTER` ;
 en son absence, `audioInit()` échoue proprement et `playMusic()`/
 `playSound()` deviennent de simples no-op — le reste du moteur (vidéo,
 timer, clavier) continue de fonctionner normalement, sans plantage.
+
+---
+
+## Synchronisation avec l'écran
+
+Le timer bat au rythme de l'écran : un tick par retour vertical
+(~70,086 Hz en mode 13h, mesuré au démarrage). `flip()` copie l'image
+juste après le retour vertical et `setPalette()`/`fadePalette()` font
+envoyer la palette au DAC par l'interruption du timer au même instant :
+plus d'image sautée ou doublée toutes les 12 secondes (un PIT à 70,002 Hz
+décroche lentement de l'écran), plus d'image coupée en deux, et palette
+et image changent ensemble. Pendant l'attente du retour vertical, `flip()`
+mixe le son (`setFlipIdleHook(audioUpdate)` dans `main.c`) et met le
+processeur en sommeil (HLT), ce qui soulage l'émulateur (DOSBox, js-dos).
+Si la mesure échoue (pas de VGA), le timer revient au PIT libre à 70 Hz,
+comme avant. `installTimer()` doit être appelée après `setVideoMode(0x13)`.
+
+---
+
+## Majuscules accentuées
+
+`font1` dessine É, À, Ê… avec la lettre de base à la même hauteur que la
+lettre seule (le glyphe E pour É) et l'accent au-dessus, pris dans la
+minuscule de la police (é, è, ê, ë, ã, å) : dans une cellule de 8 ou 16
+lignes, les polices dessinent sinon ces majuscules une à deux lignes plus
+petites. L'accent peut sortir de la cellule par le haut : laisser un peu
+de place au-dessus d'une première ligne de texte. `font1FullCaps = 0`
+rend les glyphes d'origine. Une banque rangée en Latin-1 le déclare avec
+`maPolice.charset = FONT1_LATIN1`.
+
+---
+
+## Corrections du 23/11/2026
+
+Reprises de la version 32 bits, dans les modules existants :
+
+- **s3m** : `Cxx` va à la ligne xx de l'ordre **suivant** (avant : la
+  ligne était prise dans le même motif, qui bouclait indéfiniment — la
+  musique de démo ne revenait jamais au début) ; échantillons 16 bits non
+  signés et à deux voies lus correctement ; une note sans numéro
+  d'instrument garde le volume de la voie ; tous les cas de `Dxx` de
+  ST3 (`D0F`/`DF0` ne faisaient rien) et mémoire d'effet partagée ;
+  un glissement ne déborde plus sur la ligne suivante ; hauteur des
+  notes calculée comme ST3 (les octaves hautes étaient fausses) ;
+  `T` ignoré sous 33 ; canaux AdLib ou au-delà de 15 correctement
+  répartis sur les voies ; jusqu'à 100 motifs ; motif tronqué lu sans
+  déborder.
+- **wav** : 8 voies ; le son remplacé quand tout est pris est le plus
+  ancien (avant : toujours la voie 0) ; mémoire d'un son rendue dès
+  qu'il a fini.
+- **audio / sblaster** : codes d'erreur précis pour `playSound()`
+  (fichier absent, format) ; fréquence réelle de la carte (voir plus
+  haut) ; buffer DMA de 32 768 octets refusé au lieu de déborder.
+- **timer / video / palette** : calage sur l'écran (voir plus haut).
+- **Interruptions** (timer, clavier, Sound Blaster) : sans contrôle de
+  pile — une interruption tombée pendant un appel DOS pouvait arrêter le
+  programme sur un faux « débordement de pile » ; `quitRequested` est
+  `volatile`.
+- **graphics** : intersections du clipping des lignes et du remplissage
+  des polygones calculées sur 32 bits (débordement de l'`int` 16 bits
+  pour des sommets loin hors de l'écran) ; remplissage au centre des
+  pixels (deux polygones voisins se touchent sans recouvrement) ; plus
+  d'écriture hors du tableau d'intersections.
+- **font1** : police 16×16 rangée en CP850 (elle était en CP437 : ses
+  lettres accentuées tombaient sur d'autres codes) ; majuscules
+  accentuées pleine hauteur ; dessin direct des glyphes entièrement à
+  l'écran (plus rapide) ; toutes les macros CP850 (`AGRAVE`, `ECIRC`…).
+- **font2** : glyphes bornés à l'écran ; feuille plus large que
+  320 pixels lue sans déborder.
+- **sprite / image** : lecture sans débordement de tampon pour une
+  largeur supérieure à 320 ; `drawImage` refuse une image qui sortirait
+  de l'écran (`IMG_ERR_SIZE`).
+- **scene** : numéro de scène hors tableau sans effet ; C89 strict
+  (virgule finale d'`enum`, commentaires `//`).
 
 ---
 
@@ -154,7 +236,7 @@ demo.exe
 │                     (compilé et lié, mais non utilisé par les scènes actuelles)
 ├── font1.h/c         Polices bitmap multi-tailles (ROM BIOS + fichiers C)
 │   └── font1/        Données glyphes : f1_8x8.c, f1_8x16.c (CP850),
-│                     f1_16x16.c (police WY-700a, CP437)
+│                     f1_16x16.c (police WY-700a, rangée en CP850)
 ├── font2.h/c         Texte par feuille de sprites .raw
 │   └── font2/        Feuilles : font.raw (32×32), 16X16_F2.raw (16×16)
 ├── sblaster.h/c      Pilote bas niveau Sound Blaster (DSP + DMA)
@@ -199,3 +281,20 @@ Vous êtes libre de l'utiliser, le modifier et le redistribuer, à condition
 que tout travail dérivé soit également publié sous GPL-3.0.
 
 Voir le fichier [`LICENSE`](LICENSE) pour le texte complet.
+
+---
+
+## Version 32 bits
+
+Si les limites du modèle mémoire **16 bits / FAR** deviennent contraignantes, une version **32 bits** du moteur est également disponible :
+
+👉 **[DOS Graphics & Audio Engine – 32 bits](https://github.com/eserandour/DOS_Graphics_and_Audio_Engine_32bits)**
+
+Cette version utilise un **modèle mémoire flat 32 bits** avec **DOS/32A**. Elle permet donc d'adresser un espace mémoire beaucoup plus important que la version 16 bits et d'éviter les contraintes liées aux pointeurs FAR et aux segments de 64 Ko.
+
+Le choix entre les deux versions dépend donc principalement des besoins du projet :
+
+* **16 bits** : modèle mémoire DOS classique, pointeurs **FAR**, compatibilité avec l'environnement 8086 et approche très proche du développement DOS historique.
+* **32 bits** : mode protégé avec **DOS/32A**, espace d'adressage linéaire 32 bits et possibilité de manipuler beaucoup plus facilement de grandes quantités de données en mémoire.
+
+Les deux versions conservent la même philosophie : **C, DOS, accès direct au matériel VGA/Sound Blaster et absence de dépendances graphiques ou audio modernes**.

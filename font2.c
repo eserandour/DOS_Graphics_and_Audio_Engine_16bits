@@ -10,9 +10,10 @@
    Toutes les tailles et offsets sont calcules en unsigned long
    pour eviter les debordements (ex: 320*192 = 61440 > 32767).
 
-   Charge toute la feuille en RAM far une seule fois via font2Load().
-   Lecture ligne par ligne (sheet_w octets par appel) pour
-   eviter le probleme de fread > 32767 octets en une passe.
+   Charge toute la feuille en RAM far une seule fois via font2Load()
+   (65535 octets au plus). Lecture ligne par ligne, par morceaux
+   de 320 octets, pour eviter le probleme de fread > 32767 octets
+   en une passe.
    Blit direct depuis le buffer : zero acces disque pendant le rendu.
    ========================================================= */
 
@@ -58,30 +59,43 @@ int font2Load(Font2Desc *fd)
 {
     FILE *f;
     unsigned char rowBuf[320];
-    unsigned long row;
+    unsigned long row, size;
     unsigned char far *dst;
 
     if (fd->sheet) return 1;   /* deja en RAM */
 
-    fd->sheet = (unsigned char far *)_fmalloc(
-        (unsigned long)fd->sheet_w * (unsigned long)fd->sheet_h);
+    /* Un seul bloc _fmalloc : 65535 octets au plus (une feuille
+       320x192 = 61440 tient). */
+    size = (unsigned long)fd->sheet_w * (unsigned long)fd->sheet_h;
+    if (fd->sheet_w <= 0 || fd->sheet_h <= 0 || size > 65535UL) return 0;
+
+    fd->sheet = (unsigned char far *)_fmalloc((size_t)size);
     if (!fd->sheet) return 0;
 
     f = fopen(fd->path, "rb");
     if (!f) { _ffree(fd->sheet); fd->sheet = NULL; return 0; }
 
+    /* Ligne par ligne, et par morceaux de sizeof(rowBuf) octets :
+       une feuille plus large que l'ecran ne deborde pas du
+       tampon. */
     dst = fd->sheet;
     for (row = 0; row < (unsigned long)fd->sheet_h; row++)
     {
-        if (fread(rowBuf, 1, (unsigned)fd->sheet_w, f)
-                != (unsigned)fd->sheet_w)
+        unsigned int done = 0, n;
+        while (done < (unsigned)fd->sheet_w)
         {
-            fclose(f);
-            _ffree(fd->sheet);
-            fd->sheet = NULL;
-            return 0;
+            n = (unsigned)fd->sheet_w - done;
+            if (n > sizeof(rowBuf)) n = sizeof(rowBuf);
+            if (fread(rowBuf, 1, n, f) != n)
+            {
+                fclose(f);
+                _ffree(fd->sheet);
+                fd->sheet = NULL;
+                return 0;
+            }
+            _fmemcpy(dst + done, rowBuf, n);
+            done += n;
         }
-        _fmemcpy(dst, rowBuf, (unsigned)fd->sheet_w);
         dst += fd->sheet_w;
     }
 
@@ -104,22 +118,36 @@ int font2IsLoaded(const Font2Desc *fd)
    RENDU
    ========================================================= */
 
+/* Comme les primitives de graphics.c (putPixel, drawLine...), ce
+   blit est borne a l'ecran : la partie d'un glyphe qui depasse un
+   bord n'est pas dessinee (un texte peut entrer ou sortir de
+   l'ecran sans ecrire hors du backbuffer). */
 void font2DrawChar(Font2Desc *fd, unsigned char c,
                    int x, int y)
 {
     int srcX, srcY, row, col;
+    int row0, row1, col0, col1;     /* partie du glyphe dans l'ecran */
     unsigned char far *dst;
     unsigned char pix;
     unsigned char ck;
 
+    if (!fd->sheet) return;
     if (!glyphPos(fd, c, &srcX, &srcY)) return;
 
-    ck  = (unsigned char)fd->colorKey;
-    dst = backbuffer + OFFSET(x, y);
+    row0 = (y < 0) ? -y : 0;
+    col0 = (x < 0) ? -x : 0;
+    row1 = fd->char_h;
+    col1 = fd->char_w;
+    if (y > SCREEN_HEIGHT - row1) row1 = SCREEN_HEIGHT - y;
+    if (x > SCREEN_WIDTH  - col1) col1 = SCREEN_WIDTH  - x;
+    if (row0 >= row1 || col0 >= col1) return;   /* entierement dehors */
 
-    for (row = 0; row < fd->char_h; row++)
+    ck  = (unsigned char)fd->colorKey;
+    dst = backbuffer + OFFSET(x, y + row0);
+
+    for (row = row0; row < row1; row++)
     {
-        for (col = 0; col < fd->char_w; col++)
+        for (col = col0; col < col1; col++)
         {
             /* Offset unsigned long obligatoire pour eviter
                le debordement 16 bits.                     */

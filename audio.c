@@ -64,6 +64,12 @@ static volatile int currentHalf = 0;   /* moitié actuellement jouée par le DMA
    reste est fait par audioUpdate() depuis la boucle principale,
    HORS contexte d'interruption.
    --------------------------------------------------------- */
+/* Le code exécuté pendant l'interruption ne doit pas contenir
+   de contrôle de pile : l'interruption peut tomber pendant un
+   appel DOS ou BIOS, sur une autre pile que celle du programme,
+   et le contrôle croirait alors à un débordement. */
+#pragma off (check_stack);
+
 static void interrupt audioISR(void)
 {
     sbAckIRQ();   /* acquitte le DSP et envoie l'EOI au(x) PIC(s) */
@@ -79,6 +85,8 @@ static void interrupt audioISR(void)
         currentHalf = 0;  /* le DMA enchaîne déjà tout seul sur A               */
     }
 }
+
+#pragma on (check_stack);
 
 /* ---------------------------------------------------------
    Mixage d'une moitié de buffer : musique puis effets, sans
@@ -96,7 +104,8 @@ static void mixBuffer(unsigned char far *buf, unsigned int n)
 
 int audioInit(void)
 {
-    unsigned char tc;
+    unsigned char tc = 0;
+    unsigned long rate;
 
     audioReady = 0;
     needFillA = 0;
@@ -104,6 +113,25 @@ int audioInit(void)
 
     if (sbDetect() != SB_OK) return AUD_ERR_NOCARD;
     if (sbReset()  != SB_OK) return AUD_ERR_NOCARD;
+
+    /* La sortie auto-init (sans clic entre les moitiés) demande un
+       DSP >= 2.00 : un DSP 1.xx (Sound Blaster d'origine) ne
+       saurait que des blocs simples, réarmés à la main. */
+    if (sbVersionMajor < 2) return AUD_ERR_NOCARD;
+
+    /* Fréquence réellement produite par la carte : MIX_RATE exact
+       sur un DSP >= 4.00 (commande 0x41) ; sinon, la constante de
+       temps (commande 0x40) ne donne que 1 000 000 / n Hz, soit
+       22 222 Hz pour 22 050 demandés. Le mixage se fait alors à
+       cette fréquence-là : mixer à 22 050 Hz un son joué à 22 222
+       ferait monter toute la musique de 0,8 % (hauteur et tempo). */
+    if (sbIsDsp4())
+        rate = MIX_RATE;
+    else
+    {
+        tc   = (unsigned char)(256U - (unsigned int)((1000000UL + MIX_RATE / 2UL) / MIX_RATE));
+        rate = sbRateFromTc(tc);
+    }
 
     sbSetMixerVolumeMax();
 
@@ -124,13 +152,13 @@ int audioInit(void)
     _fmemset(bufA, 128, MIX_BUFFER_SAMPLES);
     _fmemset(bufB, 128, MIX_BUFFER_SAMPLES);
 
-    s3mInit(MIX_RATE);
-    wavInit(MIX_RATE);
+    s3mInit(rate);
+    wavInit(rate);
 
-    /* Constante de temps DSP (commande 0x40) : compatible avec
-       toutes les cartes SB, contrairement à 0x41 (DSP >= 4.xx). */
-    tc = (unsigned char)(256U - (unsigned int)(1000000UL / MIX_RATE));
-    sbSetTimeConstant(tc);
+    if (sbIsDsp4())
+        sbSetOutputRate((unsigned int)MIX_RATE);   /* fréquence exacte */
+    else
+        sbSetTimeConstant(tc);    /* commande 0x40 : toutes les cartes SB */
 
     sbInstallIRQ(audioISR);
 
@@ -234,5 +262,15 @@ void fadeMusicOut(unsigned long durationMs)
 int playSound(const char *filename)
 {
     if (!audioReady) return AUD_ERR_NOCARD;
-    return (wavPlay(filename) == WAV_OK) ? AUD_OK : AUD_ERR_MEM;
+
+    /* Code d'erreur précis, comme playMusic() (avant : toute erreur
+       devenait AUD_ERR_MEM, même un fichier absent). */
+    switch (wavPlay(filename))
+    {
+    case WAV_OK:         return AUD_OK;
+    case WAV_ERR_FILE:   return AUD_ERR_FILE;
+    case WAV_ERR_READ:   return AUD_ERR_FORMAT;
+    case WAV_ERR_FORMAT: return AUD_ERR_FORMAT;
+    default:             return AUD_ERR_MEM;
+    }
 }

@@ -37,18 +37,27 @@
 #define WAV_ERR_MEM     4
 
 /* Nombre de sons pouvant jouer simultanément. Si toutes les
-   voies sont occupées, la plus ancienne est réutilisée (le
-   nouveau son est toujours audible, jamais silencieusement
-   ignoré). */
-#define WAV_MAX_VOICES  4
+   voies sont occupées, celle du son démarré le plus tôt est
+   réutilisée (le nouveau son est toujours audible, jamais
+   silencieusement ignoré).
+   8 voies (4 dans les premières versions du moteur) : le mixage
+   ne coûte que pour les voies actives, et chaque son ajouté est
+   écrêté à 8 bits (garder de la marge dans les sons si beaucoup
+   jouent ensemble). Se règle à la compilation
+   (wcc -dWAV_MAX_VOICES=4 ...). */
+#ifndef WAV_MAX_VOICES
+#define WAV_MAX_VOICES  8
+#endif
 
 /* À appeler une seule fois avant tout usage, avec la fréquence
    de mixage du moteur audio (voir audio.h : MIX_RATE). */
 void wavInit(unsigned long mixRate);
 
-/* Charge 'filename' et le joue sur une voie libre (ou la plus
-   ancienne si toutes sont occupées). Retourne WAV_OK ou un
-   code d'erreur ; en cas d'erreur, aucune voie n'est modifiée. */
+/* Charge 'filename' et le joue sur une voie libre (ou celle du
+   son démarré le plus tôt si toutes sont occupées). Retourne
+   WAV_OK ou un code d'erreur ; en cas d'erreur, aucune voie
+   n'est modifiée. La mémoire d'un son est rendue dès qu'il a
+   fini de jouer. */
 int wavPlay(const char *filename);
 
 /* Mixe les voies actives par-dessus 'n' octets déjà présents

@@ -18,7 +18,7 @@
 
 #define S3M_MAX_ORDERS       256
 #define S3M_MAX_INSTRUMENTS  100
-#define S3M_MAX_PATTERNS     64
+#define S3M_MAX_PATTERNS     100   /* maximum prévu par le format S3M */
 
 /* ---------------------------------------------------------
    Structures internes
@@ -55,10 +55,18 @@ typedef struct {
     unsigned long step;        /* pas 16.16 par échantillon de sortie */
     unsigned char volume;      /* 0-64, volume de la voie */
     unsigned char mixVol;      /* volume*volumeGlobal/64, recalé par tick */
-    unsigned char volSlide;    /* paramètre Dxx en cours (0 = aucun) */
-    unsigned char volSlideMem; /* dernier paramètre Dxx NON NUL (mémoire
-                                   d'effet standard S3M : Dxx avec x=y=0
-                                   réutilise le dernier glissement réglé) */
+    unsigned char sharedMem;   /* MÉMOIRE UNIQUE de la voie pour les effets
+                                   D E F I J K L Q R S (marqués % dans la
+                                   spécification ST3) : un paramètre 00
+                                   reprend le dernier paramètre non nul
+                                   apparu sur la voie, QUEL QUE SOIT l'effet
+                                   qui l'a porté (D00 peut donc reprendre
+                                   le paramètre d'un E04 précédent, même
+                                   si E n'est pas joué par ce moteur). */
+    int           volSlideMode; /* 0 aucun ; 1 fin (tick 0 seul) ; 2 à TOUS
+                                    les ticks (D0F, DF0) ; 3 aux ticks non
+                                    nuls (D0y, Dx0, Dxy) */
+    int           volSlideAmt;  /* variation de volume par pas (signée) */
     int           playing;
 } S3mChannel;
 
@@ -67,9 +75,16 @@ typedef struct {
    --------------------------------------------------------- */
 
 static S3mSample  samples[S3M_MAX_INSTRUMENTS];
-static S3mPattern patterns[S3M_MAX_PATTERNS];
+/* 100 motifs x 134 octets : rangés hors du segment de données
+   (far), qui est limité à 64 Ko en modèle large. */
+static S3mPattern far patterns[S3M_MAX_PATTERNS];
 static unsigned char orders[S3M_MAX_ORDERS];
-static int chEnabled[32];
+/* Voie de mixage de chaque canal du fichier (-1 : canal non
+   joué). Seuls les canaux PCM activés (réglage 0-15 dans
+   l'en-tête) reçoivent une voie, dans l'ordre, jusqu'à
+   S3M_MAX_CHANNELS : un module qui utilise les canaux 16 à 31,
+   ou qui contient des canaux AdLib, est joué correctement. */
+static int chanVoice[32];
 static S3mChannel channels[S3M_MAX_CHANNELS];
 
 /* ---------------------------------------------------------
@@ -170,12 +185,11 @@ static int loadSampleData(FILE *f, S3mSample *smp, unsigned long fileOffset,
                            unsigned long srcCount, int bytesPerSample,
                            int channelsIn, int isSigned)
 {
-    unsigned char nearBuf[S3M_CHUNK_FRAMES * 4];
+    unsigned char nearBuf[S3M_CHUNK_FRAMES * 2];
     unsigned char outChunk[S3M_CHUNK_FRAMES];
     unsigned long destLen;
-    unsigned long remaining;
     unsigned long produced;
-    unsigned int  frameBytes;
+    int c;
 
     destLen = srcCount;
     if (destLen > 65535UL) destLen = 65535UL;
@@ -183,80 +197,54 @@ static int loadSampleData(FILE *f, S3mSample *smp, unsigned long fileOffset,
     smp->data = (unsigned char far *)_fmalloc((size_t)destLen);
     if (!smp->data) return S3M_ERR_MEM;
 
-    fseek(f, (long)fileOffset, SEEK_SET);
-
-    frameBytes = (unsigned int)bytesPerSample * (unsigned int)channelsIn;
-    remaining  = srcCount;
-    produced   = 0;
-
-    while (remaining > 0 && produced < destLen)
+    /* Le moteur est mono. Un échantillon marqué « 2 voies » dans le
+       fichier est rangé en DEUX BLOCS successifs de srcCount
+       échantillons (gauche, puis droite), non entrelacés : le second
+       bloc est moyenné avec le premier, puis oublié. (Une version
+       précédente les lisait comme entrelacés : son stéréo faux.) */
+    for (c = 0; c < channelsIn; c++)
     {
-        unsigned int framesThisChunk;
-        unsigned int bytesToRead;
-        unsigned int k;
+        fseek(f, (long)(fileOffset + (unsigned long)c * srcCount * (unsigned long)bytesPerSample), SEEK_SET);
+        produced = 0;
 
-        framesThisChunk = S3M_CHUNK_FRAMES;
-        if ((unsigned long)framesThisChunk > remaining)
-            framesThisChunk = (unsigned int)remaining;
-        if ((unsigned long)framesThisChunk > destLen - produced)
-            framesThisChunk = (unsigned int)(destLen - produced);
-
-        bytesToRead = framesThisChunk * frameBytes;
-
-        if (fread(nearBuf, 1, bytesToRead, f) != bytesToRead)
-            break;   /* fichier tronqué : le reste restera silence */
-
-        for (k = 0; k < framesThisChunk; k++)
+        while (produced < destLen)
         {
-            int v;
+            unsigned int n, k, bytes;
 
-            if (bytesPerSample == 1)
+            n = S3M_CHUNK_FRAMES;
+            if ((unsigned long)n > destLen - produced)
+                n = (unsigned int)(destLen - produced);
+            bytes = n * (unsigned int)bytesPerSample;
+
+            if (fread(nearBuf, 1, bytes, f) != bytes)
+                break;   /* fichier tronqué : le reste restera silence */
+
+            for (k = 0; k < n; k++)
             {
-                unsigned char s0;
-                s0 = nearBuf[k * frameBytes];
-                v = isSigned ? ((int)(signed char)s0 + 128) : (int)s0;
-                if (channelsIn == 2)
-                {
-                    unsigned char s1;
-                    int v1;
-                    s1 = nearBuf[k * frameBytes + 1];
-                    v1 = isSigned ? ((int)(signed char)s1 + 128) : (int)s1;
-                    v = (v + v1) / 2;
-                }
+                unsigned char b;
+                int v;
+
+                /* En 16 bits (petit-boutiste), seul l'octet de poids fort
+                   compte : le moteur mixe en 8 bits. Signé (format S3M 1) :
+                   on le recentre sur 128 ; non signé (format 2, le cas
+                   normal) : il est déjà centré sur 128. (Une version
+                   précédente lisait tout échantillon 16 bits comme signé :
+                   son très distordu pour le cas normal, non signé.) */
+                b = (bytesPerSample == 1) ? nearBuf[k] : nearBuf[2 * k + 1];
+                v = isSigned ? ((int)(signed char)b + 128) : (int)b;
+
+                if (c == 0)
+                    outChunk[k] = (unsigned char)v;
+                else
+                    outChunk[k] = (unsigned char)(((int)smp->data[produced + k] + v) / 2);
             }
-            else
-            {
-                int lo, hi, s16;
-                lo  = nearBuf[k * frameBytes];
-                hi  = nearBuf[k * frameBytes + 1];
-                /* (unsigned int)->(int) reinterprete deja le motif binaire
-                   en complement a deux : s16 est signe correctement des
-                   cette conversion (int fait 16 bits en cible DOS), pas
-                   besoin d'un test manuel de depassement ensuite. */
-                s16 = (int)((unsigned int)lo | ((unsigned int)hi << 8));
-                v = (s16 >> 8) + 128;
-                if (channelsIn == 2)
-                {
-                    int lo2, hi2, s16b, v2;
-                    lo2  = nearBuf[k * frameBytes + 2];
-                    hi2  = nearBuf[k * frameBytes + 3];
-                    s16b = (int)((unsigned int)lo2 | ((unsigned int)hi2 << 8));
-                    v2 = (s16b >> 8) + 128;
-                    v  = (v + v2) / 2;
-                }
-            }
-            if (v < 0) v = 0;
-            if (v > 255) v = 255;
-            outChunk[k] = (unsigned char)v;
+            _fmemcpy(smp->data + produced, outChunk, n);
+            produced += n;
         }
 
-        _fmemcpy(smp->data + produced, outChunk, framesThisChunk);
-        produced  += framesThisChunk;
-        remaining -= framesThisChunk;
+        if (c == 0 && produced < destLen)
+            _fmemset(smp->data + produced, 128, (size_t)(destLen - produced));
     }
-
-    if (produced < destLen)
-        _fmemset(smp->data + produced, 128, (size_t)(destLen - produced));
 
     smp->len = destLen;
     return S3M_OK;
@@ -326,7 +314,7 @@ static int loadInstrument(FILE *f, S3mSample *smp, unsigned long paraPtr)
    Chargement d'un motif (pattern) packé + table des lignes
    --------------------------------------------------------- */
 
-static int loadPattern(FILE *f, S3mPattern *pat, unsigned long paraPtr)
+static int loadPattern(FILE *f, S3mPattern far *pat, unsigned long paraPtr)
 {
     unsigned int packedLen;
     unsigned char nearBuf[256];
@@ -344,8 +332,14 @@ static int loadPattern(FILE *f, S3mPattern *pat, unsigned long paraPtr)
     if (rdErr) return S3M_ERR_READ;
     if (packedLen == 0) return S3M_OK;
 
-    pat->data = (unsigned char far *)_fmalloc((size_t)packedLen);
+    /* 8 octets de marge à zéro derrière le flux : une cellule tronquée en
+       fin de motif (fichier abîmé) peut annoncer jusqu'à 5 octets de plus
+       que ce qui reste ; parseRow() les lit alors dans la marge au lieu
+       de déborder du bloc. */
+    if (packedLen > 65535U - 8U) return S3M_ERR_FORMAT;
+    pat->data = (unsigned char far *)_fmalloc((size_t)packedLen + 8U);
     if (!pat->data) return S3M_ERR_MEM;
+    _fmemset(pat->data + packedLen, 0, 8);
     pat->packedLen = packedLen;
 
     remaining = packedLen;
@@ -353,10 +347,16 @@ static int loadPattern(FILE *f, S3mPattern *pat, unsigned long paraPtr)
     while (remaining > 0)
     {
         unsigned int chunk;
+        unsigned int got;
         chunk = (remaining > sizeof(nearBuf)) ? (unsigned int)sizeof(nearBuf) : remaining;
-        if (fread(nearBuf, 1, chunk, f) != chunk)
+        got = (unsigned int)fread(nearBuf, 1, chunk, f);
+        if (got != chunk)
         {
-            _fmemset(pat->data + produced, 0, (size_t)(packedLen - produced));
+            /* Fichier tronqué (ou motif en toute fin de fichier : la
+               longueur annoncée compte ses 2 propres octets) : on garde
+               ce qui a été lu, le reste est mis à zéro (fin de ligne). */
+            _fmemcpy(pat->data + produced, nearBuf, got);
+            _fmemset(pat->data + produced + got, 0, (size_t)(packedLen - produced - got));
             break;
         }
         _fmemcpy(pat->data + produced, nearBuf, chunk);
@@ -427,8 +427,9 @@ void s3mUnload(void)
         channels[i].step      = 0;
         channels[i].volume    = 0;
         channels[i].mixVol    = 0;
-        channels[i].volSlide  = 0;
-        channels[i].volSlideMem = 0;
+        channels[i].sharedMem    = 0;
+        channels[i].volSlideMode = 0;
+        channels[i].volSlideAmt  = 0;
     }
 
     numOrders = 0;
@@ -461,8 +462,8 @@ int s3mLoad(const char *filename)
     unsigned int trueOrdNum, trueInsNum, truePatNum;
     unsigned char magic[4];
     unsigned char chSettings[32];
-    unsigned int  insParaPtr[S3M_MAX_INSTRUMENTS];
-    unsigned int  patParaPtr[S3M_MAX_PATTERNS];
+    static unsigned int insParaPtr[S3M_MAX_INSTRUMENTS];  /* static : pas */
+    static unsigned int patParaPtr[S3M_MAX_PATTERNS];     /* sur la pile  */
     unsigned int  ffi;
     unsigned char gv, sp, tp, mv;
     int i, err;
@@ -520,15 +521,18 @@ int s3mLoad(const char *filename)
     fseek(f, 0x42, SEEK_SET);
     if (fread(chSettings, 1, 32, f) != 32) { fclose(f); return S3M_ERR_READ; }
 
+    /* Canaux PCM activés (réglage 0-7 gauche, 8-15 droite ; 16-31 :
+       AdLib, non joués ici ; bit 7 : désactivé) : une voie de mixage
+       chacun, dans l'ordre. (Avant : le numéro de canal servait de
+       voie, si bien qu'un canal au-delà de 15 était muet et qu'un
+       canal AdLib occupait une voie.) */
     numChannelsToMix = 0;
     for (i = 0; i < 32; i++)
     {
-        chEnabled[i] = (chSettings[i] < 0x80) ? 1 : 0;
-        if (chEnabled[i] && i + 1 > numChannelsToMix)
-            numChannelsToMix = i + 1;
-        if (i >= S3M_MAX_CHANNELS) chEnabled[i] = 0;
+        chanVoice[i] = -1;
+        if (chSettings[i] < 16 && numChannelsToMix < S3M_MAX_CHANNELS)
+            chanVoice[i] = numChannelsToMix++;
     }
-    if (numChannelsToMix > S3M_MAX_CHANNELS) numChannelsToMix = S3M_MAX_CHANNELS;
 
     if (rdErr) { fclose(f); return S3M_ERR_READ; }
 
@@ -602,8 +606,9 @@ int s3mLoad(const char *filename)
         channels[i].step      = 0;
         channels[i].volume    = 0;
         channels[i].mixVol    = 0;
-        channels[i].volSlide  = 0;
-        channels[i].volSlideMem = 0;
+        channels[i].sharedMem    = 0;
+        channels[i].volSlideMode = 0;
+        channels[i].volSlideAmt  = 0;
     }
 
     s3mLoaded  = 1;
@@ -624,13 +629,20 @@ static unsigned long s3mNoteStep(unsigned int semitone, unsigned int octave, uns
     unsigned long step;
 
     if (c2spd == 0) return 0;
-
-    period = (unsigned long)periodTable[semitone];
     if (octave > 15) octave = 15;
-    period >>= octave;
+
+    /* Période ST3, arrondie comme dans Scream Tracker 3 :
+         période = 8363 * ((16 * table[note]) >> octave) / c2spd
+       puis  fréquence = 8363 * 1712 / période.
+       (Une version précédente décalait la table AVANT de la
+       multiplier par 16 : aux octaves hautes, la période perdait
+       jusqu'à 4 bits de précision et les notes aiguës étaient
+       fausses de plusieurs dixièmes de ton.) */
+    period = (16UL * (unsigned long)periodTable[semitone]) >> octave;
+    period = (8363UL * period + c2spd / 2UL) / c2spd;
     if (period == 0) return 0;
 
-    freq = (1712UL * c2spd) / (16UL * period);
+    freq = (8363UL * 1712UL) / period;
     if (freq == 0) return 0;
 
     step  = (freq / mixRate) << 16;
@@ -671,7 +683,7 @@ static void applyCommand(unsigned char cmd, unsigned char info)
         }
         break;
     case 20:                             /* T : tempo */
-        if (info >= 32) tempo = info;
+        if (info >= 33) tempo = info;    /* ST3 ignore T < 33 */
         break;
     case 22:                             /* V : volume global */
         globalVolume = (info > 64) ? 64 : info;
@@ -685,19 +697,33 @@ static void applyCommand(unsigned char cmd, unsigned char info)
    Application d'une cellule (une voie, une ligne)
    --------------------------------------------------------- */
 
-static void applyCell(unsigned int channel,
+static void applyCell(unsigned int column,
                        int hasNote, unsigned char note, unsigned char instr,
                        int hasVol,  unsigned char vol,
                        int hasCmd,  unsigned char cmd, unsigned char info)
 {
-    S3mChannel *ch;
+    S3mChannel *ch = NULL;
+
+    if (chanVoice[column & 31] >= 0) ch = &channels[chanVoice[column & 31]];
+
+    /* Scream Tracker 3 : D, E, F, I, J, K, L, Q, R et S partagent UNE
+       SEULE mémoire par voie — le dernier paramètre non nul apparu sur
+       la voie, quel que soit l'effet qui le portait. */
+    if (hasCmd && ch &&
+        (cmd == 4 || cmd == 5 || cmd == 6 || cmd == 9 || cmd == 10 ||
+         cmd == 11 || cmd == 12 || cmd == 17 || cmd == 18 || cmd == 19))
+    {
+        if (info != 0) ch->sharedMem = info;
+        else           info = ch->sharedMem;
+    }
 
     if (hasCmd) applyCommand(cmd, info);
 
-    if (channel >= (unsigned int)numChannelsToMix) return;
-    if (!chEnabled[channel]) return;
+    if (!ch) return;
 
-    ch = &channels[channel];
+    /* Note 0xFF ("pas de note") avec un numéro d'instrument : c'est un
+       instrument SANS note, traité par la branche else ci-dessous. */
+    if (hasNote && note == 0xFF) hasNote = 0;
 
     if (hasNote)
     {
@@ -705,7 +731,7 @@ static void applyCell(unsigned int channel,
         {
             ch->playing = 0;
         }
-        else if (note != 0xFF)
+        else
         {
             unsigned int octave, semitone;
             int sIdx;
@@ -725,7 +751,10 @@ static void applyCell(unsigned int channel,
                 {
                     ch->pos       = 0;
                     ch->playing   = 1;
-                    ch->volume    = samples[sIdx].defVolume;
+                    /* Une note SANS numéro d'instrument garde le volume
+                       courant de la voie ; seul un numéro d'instrument le
+                       remet à la valeur par défaut de l'échantillon. */
+                    if (instr != 0) ch->volume = samples[sIdx].defVolume;
                     /* Pointeur mis en cache ici, au déclenchement de la
                        note : mixChunk() n'a alors plus besoin d'indexer
                        samples[] par sampleIdx à chaque échantillon
@@ -745,19 +774,28 @@ static void applyCell(unsigned int channel,
     if (hasVol && vol <= 64)
         ch->volume = vol;
 
-    /* 4 = 'D', glissement de volume. Mémoire d'effet standard S3M :
-       un paramètre nul (D00) réutilise le dernier paramètre Dxx non
-       nul réglé sur cette voie, au lieu d'annuler le glissement — un
-       D00 isolé n'a de sens dans un vrai module que pour "continuer"
-       un glissement déjà en cours sans le retaper à chaque ligne. */
-    if (hasCmd && cmd == 4)
+    /* 4 = 'D', glissement de volume (paramètre déjà résolu par la
+       mémoire). Cas de la spécification ST3 :
+         DxF (x>0), DFF  : fin, monte de x (15), tick 0 seul
+         DFy (y>0)       : fin, descend de y, tick 0 seul
+         D0F / DF0       : descend / monte de 15 à TOUS les ticks
+         D0y             : descend de y aux ticks non nuls
+         Dx0             : monte de x aux ticks non nuls
+         Dxy (x,y > 0)   : traité comme D0y (descend de y)
+       (Avant : D0F et DF0 ne faisaient rien, et un Dxy montait.) */
+    ch->volSlideMode = 0;
+    ch->volSlideAmt  = 0;
+    if (hasCmd && cmd == 4 && info != 0)
     {
-        if (info != 0) ch->volSlideMem = info;
-        ch->volSlide = ch->volSlideMem;
-    }
-    else
-    {
-        ch->volSlide = 0;
+        unsigned int up   = (info >> 4) & 0x0F;
+        unsigned int down = info & 0x0F;
+
+        if (down == 0x0F && up != 0)       { ch->volSlideMode = 1; ch->volSlideAmt =  (int)up;   }
+        else if (up == 0x0F && down != 0)  { ch->volSlideMode = 1; ch->volSlideAmt = -(int)down; }
+        else if (down == 0x0F)             { ch->volSlideMode = 2; ch->volSlideAmt = -15; }
+        else if (up == 0x0F)               { ch->volSlideMode = 2; ch->volSlideAmt =  15; }
+        else if (down != 0)                { ch->volSlideMode = 3; ch->volSlideAmt = -(int)down; }
+        else                               { ch->volSlideMode = 3; ch->volSlideAmt =  (int)up;   }
     }
 }
 
@@ -765,7 +803,7 @@ static void applyCell(unsigned int channel,
    Lecture des cellules d'une ligne de motif
    --------------------------------------------------------- */
 
-static void parseRow(S3mPattern *pat, unsigned int row)
+static void parseRow(S3mPattern far *pat, unsigned int row)
 {
     unsigned int i;
     unsigned char what;
@@ -821,14 +859,22 @@ static void advanceRow(void)
     nextOrder = currentOrder;
     nextRow   = currentRow + 1;
 
-    if (patBreakPending) nextRow = patBreakRow;
+    if (patBreakPending)
+    {
+        /* Cxx : ligne patBreakRow de l'ordre SUIVANT (ou de l'ordre
+           visé par un Bxx posé sur la même ligne, voir ci-dessous).
+           (Avant : la ligne était prise dans le MÊME motif, qui
+           rebouclait alors indéfiniment sur lui-même.) */
+        nextOrder = currentOrder + 1;
+        nextRow   = patBreakRow;
+    }
 
     if (posJumpPending)
     {
         nextOrder = posJumpTarget;
         if (!patBreakPending) nextRow = 0;
     }
-    else if (nextRow >= 64)
+    else if (!patBreakPending && nextRow >= 64)
     {
         nextOrder = currentOrder + 1;
         nextRow   = 0;
@@ -861,32 +907,26 @@ static void advanceRow(void)
 }
 
 /* ---------------------------------------------------------
-   Glissement de volume Dxx — application "fine" (DxF / DFx) :
-   contrairement au glissement normal (D0y / Dx0), un glissement fin
-   ne s'applique qu'UNE SEULE FOIS, au déclenchement de la ligne
-   (tick 0), jamais répété sur les ticks suivants. C'est le
-   comportement standard du format S3M (identique à Impulse Tracker).
+   Glissement de volume Dxx — un pas, pour les voies dont le mode
+   s'applique à ce tick : au tick 0 de la ligne, le glissement fin
+   (mode 1, une seule fois) et le premier pas de D0F / DF0 (mode 2) ;
+   aux ticks suivants, D0F / DF0 (mode 2) et les glissements
+   normaux (mode 3).
    --------------------------------------------------------- */
-static void applyFineVolSlide(void)
+static void applyVolSlide(int firstTick)
 {
     unsigned int i;
 
     for (i = 0; i < (unsigned int)numChannelsToMix; i++)
     {
         S3mChannel *ch = &channels[i];
-        unsigned int up, down;
         int v;
 
-        if (ch->volSlide == 0) continue;
+        if (ch->volSlideMode == 0) continue;
+        if (firstTick  && ch->volSlideMode == 3) continue;
+        if (!firstTick && ch->volSlideMode == 1) continue;
 
-        up   = (ch->volSlide >> 4) & 0x0F;
-        down = ch->volSlide & 0x0F;
-        v    = (int)ch->volume;
-
-        if (down == 0x0F && up > 0)        v += up;    /* DxF : montée fine */
-        else if (up == 0x0F && down > 0)   v -= down;   /* DFx : descente fine */
-        else continue;                                  /* pas un glissement fin */
-
+        v = (int)ch->volume + ch->volSlideAmt;
         if (v < 0)  v = 0;
         if (v > 64) v = 64;
         ch->volume = (unsigned char)v;
@@ -907,44 +947,29 @@ static void doTick(void)
         posJumpPending  = 0;
         patBreakPending = 0;
 
+        /* Les effets de voie ne valent que pour leur ligne : une voie
+           sans cellule sur la nouvelle ligne ne doit pas continuer le
+           glissement de la ligne précédente (avant : il continuait). */
+        for (i = 0; i < (unsigned int)numChannelsToMix; i++)
+        {
+            channels[i].volSlideMode = 0;
+            channels[i].volSlideAmt  = 0;
+        }
+
         parseRow(&patterns[currentPattern], currentRow);
         if (!s3mPlaying) return;
 
         /* Les glissements fins (DxF/DFx) s'appliquent une seule fois,
            exactement ici, au déclenchement de la nouvelle ligne —
-           jamais sur les ticks suivants (voir applyFineVolSlide). */
-        applyFineVolSlide();
+           jamais sur les ticks suivants ; D0F/DF0 aussi (premier pas). */
+        applyVolSlide(1);
 
         advanceRow();
         tickCounter = speed;
     }
     else
     {
-        for (i = 0; i < (unsigned int)numChannelsToMix; i++)
-        {
-            S3mChannel *ch;
-            unsigned int up, down;
-            int v;
-
-            ch = &channels[i];
-            if (ch->volSlide == 0) continue;
-
-            up   = (ch->volSlide >> 4) & 0x0F;
-            down = ch->volSlide & 0x0F;
-
-            /* up==0x0F ou down==0x0F marque un glissement FIN (DxF/DFx),
-               déjà traité une fois au tick 0 (applyFineVolSlide) : il
-               ne doit surtout pas être réappliqué ici à chaque tick,
-               sous peine de glisser en continu au lieu d'un seul pas. */
-            if (up == 0x0F || down == 0x0F) continue;
-
-            v = (int)ch->volume;
-            if (up > 0)        v += up;
-            else if (down > 0) v -= down;
-            if (v < 0)  v = 0;
-            if (v > 64) v = 64;
-            ch->volume = (unsigned char)v;
-        }
+        applyVolSlide(0);
     }
 
     if (tickCounter > 0) tickCounter--;
